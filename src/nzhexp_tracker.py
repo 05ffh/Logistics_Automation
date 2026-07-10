@@ -66,8 +66,8 @@ def query_tracking(cdp: CdpClient, tracking_nos: list[str]) -> list[TrackingResu
 
 
 def _query_batch(cdp: CdpClient, tracking_nos: list[str]) -> list[TrackingResult]:
-    """查询一批单号。"""
-    keyword = tracking_nos[0]  # 当前逐个搜
+    """查询一批单号（逐个搜，BATCH_SIZE=1 确保稳定）。"""
+    keyword = tracking_nos[0]
 
     # 0. 完整清空并导航到干净页面
     cdp.evaluate(
