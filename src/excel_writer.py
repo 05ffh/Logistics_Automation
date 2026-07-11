@@ -1,29 +1,40 @@
-"""将物流轨迹信息写回 Excel Y 列（物流轨迹1）。"""
+"""将物流轨迹信息写回 Excel 的"物流轨迹N"列。
+
+每家发货公司独占一列：物流轨迹1(Y) / 物流轨迹2(Z) / 物流轨迹3 ...，
+列号 N = 该公司单号在 S 列首次出现的次序。缺列时紧跟最后一个物流轨迹列后插入。
+只写查询到的公司(云驼/宁致)对应列，不触碰其他公司(华洋/华运昌等)手填的列。
+
+迁移清理：存量数据常把多家公司挤在物流轨迹1(Y)。写入查询公司到其正确列后，
+把该公司单号的残留块从其他物流轨迹列移除（残留块的单号=已在正确列的新数据，可安全删）。
+所有物流轨迹列统一采用物流轨迹1的列宽。
+"""
 
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 from pathlib import Path
 
 import openpyxl
+from openpyxl.utils import get_column_letter
 
-COL_TRACKING_INFO = 24  # Y列-物流轨迹1 (0-indexed)
+HEADER_ROW = 2          # 表头所在行
+TRACK_HEADER = "物流轨迹"  # 列标题前缀
+_TN_LINE = re.compile(r"^[A-Za-z0-9]{5,30}$")
 
 
 def write_results(excel_path: str | Path, results: list[dict]) -> dict:
-    """将查询结果写回 Excel，写入前自动备份。
+    """按物流轨迹N列写回，写入前自动备份。
 
-    Returns:
-        {updated: int, errors: int}
+    每个 result 需含: sheet, row_num, routing_info, track_position；
+    可选 tracking_nos（用于迁移清理其他列的残留块）。
     """
     excel_path = Path(excel_path)
 
-    # 写入前备份
     backup_path = excel_path.with_name(f"{excel_path.stem}_备份{excel_path.suffix}")
     shutil.copy2(excel_path, backup_path)
 
-    # 检查文件是否被占用
     try:
         with tempfile.NamedTemporaryFile(dir=excel_path.parent, delete=False) as f:
             f.write(b"lock_test")
@@ -45,14 +56,121 @@ def write_results(excel_path: str | Path, results: list[dict]) -> dict:
             continue
 
         ws = wb[sheet_name]
+        need_max = max((r.get("track_position", 1) for r in rows), default=1)
+        track_cols = _ensure_track_columns(ws, need_max)
+
         for r in rows:
             try:
-                col_idx = COL_TRACKING_INFO + 1
-                ws.cell(row=r["row_num"], column=col_idx).value = r["routing_info"]
+                pos = r.get("track_position", 1)
+                target = track_cols.get(pos)
+                if target is None:
+                    errors += 1
+                    continue
+                ws.cell(row=r["row_num"], column=target).value = r["routing_info"]
                 updated += 1
+                _cleanup_other_columns(ws, r["row_num"], r["routing_info"],
+                                       track_cols, target)
             except Exception:
                 errors += 1
 
     wb.save(excel_path)
     wb.close()
     return {"updated": updated, "errors": errors, "backup": str(backup_path)}
+
+
+def _cleanup_other_columns(ws, row_num, routing_info, track_cols, target_col):
+    """迁移清理：把本次写入的单号残留块从其他物流轨迹列移除。"""
+    written = _tns_in(routing_info)
+    if not written:
+        return
+    for col in track_cols.values():
+        if col == target_col:
+            continue
+        cell = ws.cell(row=row_num, column=col)
+        if not cell.value:
+            continue
+        cleaned = _remove_blocks(str(cell.value), written)
+        if cleaned != str(cell.value):
+            cell.value = cleaned or None
+
+
+def _tns_in(text: str) -> set[str]:
+    return {ln.strip() for ln in text.split("\n") if _TN_LINE.match(ln.strip())}
+
+
+def _remove_blocks(text: str, tns_to_remove: set[str]) -> str:
+    """把文本按单号行切成块，删除单号命中的块，保留其余（含无单号的前导文本）。"""
+    segments: list[tuple[str | None, list[str]]] = []
+    cur_tn: str | None = None
+    cur: list[str] = []
+    for ln in text.split("\n"):
+        if _TN_LINE.match(ln.strip()):
+            segments.append((cur_tn, cur))
+            cur_tn = ln.strip()
+            cur = [ln]
+        else:
+            cur.append(ln)
+    segments.append((cur_tn, cur))
+
+    out: list[str] = []
+    for tn, seg in segments:
+        if tn is not None and tn in tns_to_remove:
+            continue
+        out.extend(seg)
+    return "\n".join(out).strip()
+
+
+def _ensure_track_columns(ws, need_max: int) -> dict[int, int]:
+    """确保存在物流轨迹1..need_max列，返回 {N: 列号(1-based)}。
+
+    缺失的列紧跟当前最后一个物流轨迹列之后插入并写表头；
+    所有物流轨迹列统一采用物流轨迹1的列宽。
+    """
+    track_cols = _find_track_columns(ws)
+    if not track_cols:
+        return track_cols
+
+    existing_max = max(track_cols)
+    base_col = track_cols.get(1, track_cols[existing_max])
+    base_width = ws.column_dimensions[get_column_letter(base_col)].width
+
+    if need_max > existing_max:
+        insert_at = track_cols[existing_max] + 1   # 最后一个轨迹列的右侧
+        amount = need_max - existing_max
+        last_col = ws.max_column
+
+        # insert_cols 会搬移单元格数据，但不搬列宽 → 先记录插入点右侧的列宽
+        old_widths = {
+            c: ws.column_dimensions[get_column_letter(c)].width
+            for c in range(insert_at, last_col + 1)
+        }
+        ws.insert_cols(insert_at, amount)
+        # 把右侧列宽整体右移 amount 列，对齐已搬移的数据
+        for c in range(last_col, insert_at - 1, -1):
+            w = old_widths.get(c)
+            if w is not None:
+                ws.column_dimensions[get_column_letter(c + amount)].width = w
+
+        for n in range(existing_max + 1, need_max + 1):
+            col = insert_at + (n - existing_max - 1)
+            ws.cell(row=HEADER_ROW, column=col).value = f"{TRACK_HEADER}{n}"
+            track_cols[n] = col
+
+    # 所有物流轨迹列统一列宽 = 物流轨迹1
+    if base_width:
+        for col in track_cols.values():
+            ws.column_dimensions[get_column_letter(col)].width = base_width
+
+    return track_cols
+
+
+def _find_track_columns(ws) -> dict[int, int]:
+    """扫描表头，返回已存在的 {N: 列号} for 物流轨迹N。"""
+    cols: dict[int, int] = {}
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(row=HEADER_ROW, column=c).value
+        if v and str(v).startswith(TRACK_HEADER):
+            suffix = str(v)[len(TRACK_HEADER):].strip()
+            if suffix.isdigit():
+                cols[int(suffix)] = c
+    return cols

@@ -33,6 +33,8 @@ class CdpClient:
 
     def connect_tab(self, ws_url: str) -> None:
         """通过 WebSocket URL 连接到一个标签页。"""
+        self.close()
+        self._msg_id = 0  # 重置消息计数器（避免跨适配器污染）
         parsed = urlparse(ws_url)
         host = parsed.hostname or self.host
         port = parsed.port or self.port

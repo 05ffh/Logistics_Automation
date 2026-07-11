@@ -56,9 +56,12 @@ Excel → 筛选宁致行(J/K列含"宁致") → 提取 NZ 前缀单号
 │   └── 物流网站一键启动.bat    # 启动 Edge + CDP
 ├── src/
 │   ├── cdp_client.py           # CDP WebSocket 通信层
-│   ├── excel_reader.py         # Excel 读取 + 单号提取
-│   ├── nzhexp_tracker.py       # nzhexp 查询逻辑
+│   ├── excel_reader.py         # Excel 读取 + 单号提取（按前缀归属公司）
 │   ├── excel_writer.py         # 回写 + 备份 + 占用检测
+│   ├── companies/              # 多公司适配器
+│   │   ├── base.py             # CompanyAdapter 抽象基类
+│   │   ├── ningzhi.py          # 宁致 (NZ) → nzhexp.nextsls.com
+│   │   └── yuntuo.py           # 云驼 (999) → 17track.net（批量查询）
 │   └── main.py                 # 主流程编排
 ├── skill/
 │   └── logistics-track/

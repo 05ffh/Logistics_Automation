@@ -1,9 +1,8 @@
-"""物流轨迹查询 - 主流程。
+"""物流轨迹查询 - 主流程（多公司支持）。
 
 用法:
-    python -m src.main <excel_path>              # 处理所有 sheet
+    python -m src.main <excel_path>              # 处理所有 sheet + 所有公司
     python -m src.main <excel_path> 202605       # 只处理指定 sheet
-    python -m src.main <excel_path> 202605,202606  # 处理多个 sheet
 """
 
 from __future__ import annotations
@@ -15,20 +14,24 @@ from pathlib import Path
 
 try:
     from .cdp_client import CdpClient
-    from .excel_reader import find_nz_rows
+    from .companies.ningzhi import NingZhiAdapter
+    from .companies.yuntuo import YunTuoAdapter
+    from .excel_reader import find_company_rows, company_position
     from .excel_writer import write_results
-    from .nzhexp_tracker import check_logged_in, ensure_nzhexp_tab, query_tracking
 except ImportError:
     from cdp_client import CdpClient
-    from excel_reader import find_nz_rows
+    from companies.ningzhi import NingZhiAdapter
+    from companies.yuntuo import YunTuoAdapter
+    from excel_reader import find_company_rows, company_position
     from excel_writer import write_results
-    from nzhexp_tracker import check_logged_in, ensure_nzhexp_tab, query_tracking
+
+# 注册所有公司适配器
+ADAPTERS = [NingZhiAdapter(), YunTuoAdapter()]
 
 
 def main():
     if len(sys.argv) < 2:
         print("Usage: python -m src.main <excel_path> [sheet_names]")
-        print("  sheet_names: comma-separated, or omit for all sheets")
         sys.exit(1)
 
     excel_path = Path(sys.argv[1])
@@ -47,7 +50,6 @@ def main():
 
     print(f"Connecting to CDP at {host}:{port}...")
     cdp = CdpClient(host=host, port=port)
-
     try:
         cdp.list_tabs()
     except Exception:
@@ -55,82 +57,95 @@ def main():
         print("Double-click 物流网站一键启动.bat to start Edge first.")
         sys.exit(1)
 
-    # 2. 确保 nzhexp 标签页就绪
-    print("Finding nzhexp tab...")
-    ws_url = ensure_nzhexp_tab(cdp)
-    cdp.connect_tab(ws_url)
-
-    # 3. 检查登录态
-    print("Checking login status...")
-    if not check_logged_in(cdp):
-        print("ERROR: nzhexp is not logged in.")
-        print("Please log in to nzhexp in the Edge window, then retry.")
-        cdp.close()
-        sys.exit(1)
-
-    # 4. 读取 Excel
+    # 2. 读取 Excel
     print(f"Reading Excel: {excel_path}")
-    rows = find_nz_rows(excel_path)
+    company_configs = [{"name": a.name, "prefix": a.prefix} for a in ADAPTERS]
+    all_rows = find_company_rows(excel_path, company_configs)
     if target_sheets:
-        rows = [r for r in rows if r["sheet"] in target_sheets]
+        all_rows = [r for r in all_rows if r["sheet"] in target_sheets]
 
-    if not rows:
-        print("No 宁致 rows found.")
+    if not all_rows:
+        print("No matching rows found for any company.")
         cdp.close()
         return
 
-    total_tracking_nos = sum(len(r["tracking_nos"]) for r in rows)
-    print(f"Found {len(rows)} rows with {total_tracking_nos} NZ tracking numbers.")
+    # 按公司分组
+    by_company: dict[str, list[dict]] = {}
+    for r in all_rows:
+        by_company.setdefault(r["company"], []).append(r)
 
-    # 5. 收集所有单号（去重）
-    all_nos: list[str] = []
-    seen = set()
-    for r in rows:
-        for tn in r["tracking_nos"]:
-            if tn not in seen:
-                seen.add(tn)
-                all_nos.append(tn)
+    adapter_map = {a.name: a for a in ADAPTERS}
 
-    # 6. 批量查询 + 增量写入
-    print(f"Querying {len(all_nos)} unique tracking numbers (batch size: 5)...")
-    results = query_tracking(cdp, all_nos)
+    # 3. 逐公司查询
+    all_results: dict[str, dict[str, str | None]] = {}  # {company: {tn: routing}}
 
-    tn_to_routing = {r.tracking_no: r.routing_info for r in results}
+    for company_name, rows in by_company.items():
+        adapter = adapter_map[company_name]
+        print(f"\n{'='*40}")
+        print(f"Company: {company_name} ({adapter.prefix}*)")
+
+        # 切换到公司标签页
+        ws_url = adapter.ensure_tab(cdp)
+        cdp.connect_tab(ws_url)
+
+        # 检查前置条件
+        if not adapter.check_ready(cdp):
+            print(f"WARNING: {company_name} not ready. Please check the browser tab.")
+            continue
+
+        # 收集唯一单号
+        tns: list[str] = []
+        seen_tns = set()
+        for r in rows:
+            for tn in r["tracking_nos"]:
+                if tn not in seen_tns:
+                    seen_tns.add(tn)
+                    tns.append(tn)
+
+        print(f"Found {len(rows)} rows, {len(tns)} unique {adapter.prefix}* numbers.")
+        results = adapter.query(cdp, tns)
+        all_results[company_name] = {r.tracking_no: r.routing_info for r in results}
+
+    # 4. 合并结果并写入
+    print(f"\n{'='*40}")
+    print("Merging results...")
     updated_count = 0
-    unchanged_count = 0
-
+    preserved_count = 0
     write_payload = []
-    for row in rows:
+
+    # 跨所有公司的本次新查结果 {单号: 轨迹}
+    global_results: dict[str, str] = {}
+    for res in all_results.values():
+        for tn, routing in res.items():
+            if routing:
+                global_results[tn] = routing
+
+    for row in all_rows:
+        company = row["company"]
         existing = row.get("existing_info") or ""
-        all_tns_in_row = _extract_all_tns_from_s_column(existing)
+        old_map = _parse_existing_map(existing)
+        # 仅本公司的单号（S 列顺序），每家公司独占一列
+        my_tns = row.get("tracking_nos") or []
 
-        # 收集该行所有单号的 routing（优先用 CDP 新结果，其次保留原文）
-        merged: dict[str, str] = {}
+        blocks = []
+        for tn in my_tns:
+            fresh = global_results.get(tn)
+            if fresh:
+                blocks.append(f"{tn}\n{fresh}")
+                updated_count += 1
+            elif old_map.get(tn):
+                blocks.append(f"{tn}\n{old_map[tn]}")
+                preserved_count += 1
 
-        for tn in all_tns_in_row:
-            if tn.startswith("NZ") and tn in tn_to_routing and tn_to_routing[tn]:
-                merged[tn] = tn_to_routing[tn]
-                if tn in (row.get("tracking_nos") or []):
-                    updated_count += 1
-            else:
-                old_routing = _extract_routing_for_tn(existing, tn)
-                merged[tn] = old_routing
-                if tn.startswith("NZ"):
-                    unchanged_count += 1
-
-        # 追加新出现的 NZ 单号（原 Y 列中完全没有的）
-        for tn in row["tracking_nos"]:
-            if tn not in merged:
-                new_info = tn_to_routing.get(tn)
-                if new_info:
-                    merged[tn] = new_info
-                    updated_count += 1
-
-        row["routing_info"] = "\n".join(f"{tn}\n{routing}" for tn, routing in merged.items())
+        row["routing_info"] = "\n".join(blocks)
+        # 该公司在 S 列首次出现的次序 → 写入第几个物流轨迹列
+        row["track_position"] = company_position(
+            row.get("all_tracking_nos") or my_tns, company
+        )
         write_payload.append(row)
 
-    # 7. 写回 Excel
-    print(f"\nRouting: {updated_count} updated, {unchanged_count} unchanged.")
+    # 5. 写回 Excel
+    print(f"\nRouting: {updated_count} updated, {preserved_count} preserved.")
     print("Writing results back to Excel...")
     write_summary = write_results(excel_path, write_payload)
 
@@ -179,6 +194,16 @@ def _extract_routing_for_tn(y_text: str, tn: str) -> str:
         tn_end = len(y_text)
     routing = y_text[tn_start + len(tn) : tn_end].strip()
     return routing
+
+
+def _parse_existing_map(y_text: str) -> dict[str, str]:
+    """把旧 Y 列解析为 {单号: 轨迹文本}，用于保留其他公司/未刷新的轨迹。"""
+    result: dict[str, str] = {}
+    for tn in _extract_all_tns_from_s_column(y_text):
+        routing = _extract_routing_for_tn(y_text, tn)
+        if routing:
+            result[tn] = routing
+    return result
 
 
 def _routing_equal(old: str, new: str) -> bool:

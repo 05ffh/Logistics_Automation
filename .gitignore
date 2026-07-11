@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Excel 临时/备份文件
+~$*.xlsx
+*_备份.xlsx
+
+# 编辑器/系统
+.DS_Store
+.idea/
+.vscode/
