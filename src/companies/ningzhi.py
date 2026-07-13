@@ -7,6 +7,11 @@ import time
 
 from .base import CompanyAdapter, TrackingResult
 
+try:
+    from ..validation import is_valid_routing
+except ImportError:
+    from validation import is_valid_routing
+
 NZHEXP_SHIPMENT_URL = "http://nzhexp.nextsls.com/tms/wos/shipment"
 NZHEXP_DOMAIN = "nzhexp.nextsls.com"
 
@@ -24,6 +29,7 @@ class NingZhiAdapter(CompanyAdapter):
     name = "宁致"
     prefix = "NZ"
     batch_size = 1
+    canary_number = "NZ2605063839"  # 自检用已知单号（失效时更新）
 
     def check_ready(self, cdp) -> bool:
         # 导航到运单页，检查是否被重定向到登录
@@ -64,6 +70,13 @@ class NingZhiAdapter(CompanyAdapter):
         raise RuntimeError("Cannot open nzhexp tab.")
 
     def _query_one(self, cdp, tracking_no: str) -> str | None:
+        # 查空重试一次（缓解 SPA 加载慢/偶发时序竞态）
+        routing = self._query_once(cdp, tracking_no)
+        if routing is None:
+            routing = self._query_once(cdp, tracking_no)
+        return routing
+
+    def _query_once(self, cdp, tracking_no: str) -> str | None:
         # 0. about:blank 重置
         cdp.evaluate("sessionStorage.clear();localStorage.removeItem('keywords');window.location.href='about:blank';")
         time.sleep(0.5)
@@ -114,7 +127,8 @@ class NingZhiAdapter(CompanyAdapter):
         cdp.click(SEL_DRAWER_CLOSE)
         time.sleep(1)
 
-        return routing
+        # 6. 校验：不合格当作未查到
+        return routing if is_valid_routing(routing) else None
 
 
 def _parse_nz_routing(drawer_text: str) -> str | None:

@@ -1,7 +1,7 @@
 """云驼物流适配器 - 17track.net。
 
-17track 结果页 textarea 原生支持批量（每行一个单号，最多 40 个），所以策略为:
-    1. 批量填入 ≤40 个单号 → 点"查询(N)"按钮
+17track 结果页 textarea 原生支持批量（每行一个单号，最多 40 个），本项目取 20/批更稳，策略为:
+    1. 批量填入 ≤20 个单号 → 点"查询(N)"按钮
     2. 等所有卡片渲染，遍历 [data-state] 卡片一次性提取 {单号: 最新时间戳+描述}
     3. 对未命中的单号（需手动选运输商 / 加载慢）回退到单条 _query_one（含选"愿景征途"）
 """
@@ -14,16 +14,22 @@ import time
 
 from .base import CompanyAdapter, TrackingResult
 
+try:
+    from ..validation import is_valid_routing
+except ImportError:
+    from validation import is_valid_routing
+
 MAIN_URL = "https://www.17track.net/zh-cn"
 RESULT_URL = "https://t.17track.net/zh-cn#nums="
 CARRIER_NAME = "愿景征途"
-MAX_BATCH = 40  # 17track 单次提交上限
+MAX_BATCH = 20  # 单批提交量（17track 上限 40，取 20 更稳、更礼貌）
 
 
 class YunTuoAdapter(CompanyAdapter):
     name = "云驼"
     prefix = "999"
     batch_size = MAX_BATCH
+    canary_number = "999260530000730"  # 自检用已知单号（失效时更新）
 
     def query(self, cdp, tracking_nos: list[str]) -> list[TrackingResult]:
         results: dict[str, str | None] = {}
@@ -125,9 +131,11 @@ class YunTuoAdapter(CompanyAdapter):
             "return JSON.stringify(res);})()"
         )
         try:
-            return json.loads(_val(r, "{}"))
+            raw = json.loads(_val(r, "{}"))
         except (ValueError, TypeError):
             return {}
+        # 校验：拦掉页面结构变化抓到的垃圾
+        return {tn: v for tn, v in raw.items() if is_valid_routing(v)}
 
     def ensure_tab(self, cdp) -> str:
         tabs = cdp.list_tabs()
@@ -292,7 +300,8 @@ def _parse_yt_routing(body: str) -> str | None:
     desc = _clean(desc)
     if not desc:
         return None
-    return f"{timestamp}\n{desc}"
+    result = f"{timestamp}\n{desc}"
+    return result if is_valid_routing(result) else None
 
 
 def _clean(text: str) -> str:

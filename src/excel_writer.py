@@ -66,10 +66,16 @@ def write_results(excel_path: str | Path, results: list[dict]) -> dict:
                 if target is None:
                     errors += 1
                     continue
-                ws.cell(row=r["row_num"], column=target).value = r["routing_info"]
+                # 漏查不覆盖：与目标列旧内容按单号合并，本次没查到的单号保留旧块
+                my_tns = r.get("tracking_nos") or []
+                existing = ws.cell(row=r["row_num"], column=target).value
+                merged = _merge_preserve(r["routing_info"], str(existing or ""), my_tns)
+                if not merged:
+                    # 全部未查到且无旧数据 → 跳过，绝不用空值覆盖
+                    continue
+                ws.cell(row=r["row_num"], column=target).value = merged
                 updated += 1
-                _cleanup_other_columns(ws, r["row_num"], r["routing_info"],
-                                       track_cols, target)
+                _cleanup_other_columns(ws, r["row_num"], merged, track_cols, target)
             except Exception:
                 errors += 1
 
@@ -96,6 +102,37 @@ def _cleanup_other_columns(ws, row_num, routing_info, track_cols, target_col):
 
 def _tns_in(text: str) -> set[str]:
     return {ln.strip() for ln in text.split("\n") if _TN_LINE.match(ln.strip())}
+
+
+def _parse_blocks(text: str) -> dict[str, str]:
+    """把文本按单号行切成 {单号: "单号\\n轨迹..."} 块。"""
+    blocks: dict[str, str] = {}
+    cur_tn: str | None = None
+    cur: list[str] = []
+    for ln in text.split("\n"):
+        if _TN_LINE.match(ln.strip()):
+            if cur_tn is not None:
+                blocks[cur_tn] = "\n".join(cur)
+            cur_tn = ln.strip()
+            cur = [ln]
+        elif cur_tn is not None:
+            cur.append(ln)
+    if cur_tn is not None:
+        blocks[cur_tn] = "\n".join(cur)
+    return blocks
+
+
+def _merge_preserve(new_info: str, old_text: str, my_tns: list[str]) -> str:
+    """按 my_tns 顺序重建：本次查到的用新块，没查到的保留旧块。"""
+    new_b = _parse_blocks(new_info)
+    old_b = _parse_blocks(old_text)
+    out = []
+    for tn in my_tns:
+        if tn in new_b:
+            out.append(new_b[tn])
+        elif tn in old_b:
+            out.append(old_b[tn])
+    return "\n".join(out).strip()
 
 
 def _remove_blocks(text: str, tns_to_remove: set[str]) -> str:
