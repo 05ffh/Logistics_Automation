@@ -57,6 +57,11 @@ class YunTuoAdapter(CompanyAdapter):
         if misses:
             print(f"  [{self.name}] 回退单条查询 {len(misses)} 个未命中...")
             for i, tn in enumerate(misses):
+                # 批量查询后页面残留 → 经主页中转重置 SPA 状态，再定向到结果页
+                cdp.evaluate(f"location.href='{MAIN_URL}';")
+                time.sleep(3)
+                cdp.evaluate(f"location.href='{RESULT_URL}{tn}';")
+                time.sleep(4)
                 results[tn] = self._query_one(cdp, tn)
                 st = "OK" if results.get(tn) else "MISS"
                 print(f"  [{self.name}] 回退 {i+1}/{len(misses)} {tn} {st}")
@@ -172,6 +177,9 @@ class YunTuoAdapter(CompanyAdapter):
 
         # 3. 轮询等待新结果加载（时间线出现 或 弹出运输商候选），避免时序竞态
         state = self._wait_result(cdp, timeout=12)
+        # 页面可能处于 mid-load 状态（loading 提示出现但内容未就绪），等它安定
+        if not self._page_stable(cdp, tracking_no, timeout=5):
+            return None
 
         # 4. 自动识别成功 → 直接提取
         routing = self._extract_routing(cdp, tracking_no)
@@ -181,6 +189,7 @@ class YunTuoAdapter(CompanyAdapter):
         # 5. 需手动选运输商 → 点"愿景征途"
         if state == "carrier" or self._select_carrier(cdp):
             self._wait_result(cdp, timeout=8, want="timeline")
+            time.sleep(1)
             return self._extract_routing(cdp, tracking_no)
 
         return None
@@ -245,6 +254,31 @@ class YunTuoAdapter(CompanyAdapter):
                 return "carrier"
             time.sleep(0.5)
         return "timeout"
+
+    def _page_stable(self, cdp, tracking_no: str, timeout: int = 5) -> bool:
+        """确认页面真正就绪：单号已出现在 body 且 textarea 可交互。
+
+        17track SPA 在 loading 阶段可能触发 _wait_result 的"同步时间"匹配
+        但实际内容尚未渲染——导致后续提取拿到空/loading 文本。
+        此方法轮询确保 body 内容已稳定（不再含 loading 提示且单号可见）。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            r = cdp.evaluate(
+                "(function(){"
+                "var b=document.body.innerText||'';"
+                "var loading=b.indexOf('check the logistics trajectory')>=0;"
+                "var hasTarget=b.indexOf('" + tracking_no + "')>=0;"
+                "if(!loading&&hasTarget)return 'ok';"
+                "if(loading)return 'loading';"
+                "return 'wait';"
+                "})()"
+            )
+            state = _val(r, "wait")
+            if state == "ok":
+                return True
+            time.sleep(0.4)
+        return False
 
     def _select_carrier(self, cdp) -> bool:
         """在运输商候选中点击含"愿景征途"的 LI 行。"""
