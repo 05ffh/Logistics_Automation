@@ -17,15 +17,23 @@ try:
     from .companies.ningzhi import NingZhiAdapter
     from .companies.yuntuo import YunTuoAdapter
     from .excel_reader import find_company_rows, company_position
-    from .excel_writer import write_results
+    from .excel_writer import write_results, merge_preserve, find_track_columns
     from .validation import is_valid_routing
+    from .miss_tracker import (
+        get_misses_path, load_misses, record_misses,
+        remove_resolved, get_stubborn, print_miss_summary, MISS_THRESHOLD,
+    )
 except ImportError:
     from cdp_client import CdpClient
     from companies.ningzhi import NingZhiAdapter
     from companies.yuntuo import YunTuoAdapter
     from excel_reader import find_company_rows, company_position
-    from excel_writer import write_results
+    from excel_writer import write_results, merge_preserve, find_track_columns
     from validation import is_valid_routing
+    from miss_tracker import (
+        get_misses_path, load_misses, record_misses,
+        remove_resolved, get_stubborn, print_miss_summary, MISS_THRESHOLD,
+    )
 
 # 注册所有公司适配器
 ADAPTERS = [NingZhiAdapter(), YunTuoAdapter()]
@@ -36,8 +44,14 @@ ANOMALY_MIN_RATE = 0.5
 
 
 def main():
-    if len(sys.argv) < 2:
+    retry_stubborn = False
+    args = [a for a in sys.argv[1:] if not a.startswith("--retry-stubborn")]
+    if "--retry-stubborn" in sys.argv:
+        retry_stubborn = True
+
+    if not args:
         print("Usage: python -m src.main <excel_path> [sheet_names]")
+        print("       python -m src.main <excel_path> --retry-stubborn")
         print("       python -m src.main --healthcheck")
         sys.exit(1)
 
@@ -48,7 +62,7 @@ def main():
     cdp = CdpClient(host=host, port=port)
 
     # 健康自检模式：用已知单号验证各站点结构是否还通
-    if sys.argv[1] == "--healthcheck":
+    if args[0] == "--healthcheck":
         print(f"Connecting to CDP at {host}:{port}...")
         try:
             cdp.list_tabs()
@@ -59,14 +73,20 @@ def main():
         cdp.close()
         sys.exit(0 if ok else 1)
 
-    excel_path = Path(sys.argv[1])
+    excel_path = Path(args[0])
     if not excel_path.exists():
         print(f"Excel file not found: {excel_path}")
         sys.exit(1)
 
     target_sheets = None
-    if len(sys.argv) > 2:
-        target_sheets = set(s.strip() for s in sys.argv[2].split(","))
+    if len(args) > 1:
+        target_sheets = set(s.strip() for s in args[1].split(","))
+
+    # 顽固补跑模式
+    if retry_stubborn:
+        run_retry_stubborn(excel_path, cdp, ADAPTERS)
+        cdp.close()
+        return
 
     # 1. 连接 CDP
     print(f"Connecting to CDP at {host}:{port}...")
@@ -150,6 +170,7 @@ def main():
     updated_count = 0
     preserved_count = 0
     write_payload = []
+    missed_entries: list[dict] = []
 
     # 跨所有公司的本次新查结果 {单号: 轨迹}
     global_results: dict[str, str] = {}
@@ -177,12 +198,25 @@ def main():
             elif old_map.get(tn):
                 blocks.append(f"{tn}\n{old_map[tn]}")
                 preserved_count += 1
+            else:
+                # 本次没查到 + 旧也没有 → 真 MISS，记账
+                missed_entries.append({
+                    "company": company, "sheet": row["sheet"],
+                    "row_num": row["row_num"], "tn": tn,
+                    "my_tns": list(my_tns),
+                })
 
         row["routing_info"] = "\n".join(blocks)
         # 该公司在 S 列首次出现的次序 → 写入第几个物流轨迹列
-        row["track_position"] = company_position(
+        pos = company_position(
             row.get("all_tracking_nos") or my_tns, company
         )
+        row["track_position"] = pos
+        # 补上该行该公司的 track_position
+        for me in missed_entries:
+            if (me["row_num"] == row["row_num"] and me["company"] == company
+                    and "track_position" not in me):
+                me["track_position"] = pos
         write_payload.append(row)
 
     # 5. 写回 Excel
@@ -195,6 +229,12 @@ def main():
     elif write_summary.get("backup"):
         print(f"Backup saved: {write_summary['backup']}")
     print(f"Done: {write_summary['updated']} rows updated, {write_summary['errors']} errors.")
+
+    # 5.5 缺失单号追踪
+    resolved = set(global_results.keys())
+    removed = remove_resolved(excel_path, resolved)
+    added = record_misses(excel_path, missed_entries)
+    print_miss_summary(excel_path, new_count=added, removed_count=removed)
 
     # 6. 运行汇总（每公司成功率一目了然，便于发现悄然退化）
     print(f"\n{'='*40}")
@@ -247,6 +287,122 @@ def run_healthcheck(cdp) -> bool:
             all_ok = False
     print(f"\n自检结果: {'全部通过 ✅' if all_ok else '存在失败 ❌，请检查对应站点'}")
     return all_ok
+
+
+def run_retry_stubborn(excel_path, cdp, adapters):
+    """--retry-stubborn 模式：只查顽固单号(miss_count>=2)，成功写回 + 移除。"""
+    print("Retry Stubborn Mode")
+    stubborn = get_stubborn(excel_path, threshold=MISS_THRESHOLD)
+    if not stubborn:
+        print("No stubborn numbers (need 2+ misses).")
+        return
+
+    by_company: dict[str, list[dict]] = {}
+    for s in stubborn:
+        by_company.setdefault(s["company"], []).append(s)
+
+    print(f"\nFound {len(stubborn)} stubborn numbers across {len(by_company)} companies:")
+    for c, entries in by_company.items():
+        print(f"  {c}: {len(entries)} numbers")
+
+    adapter_map = {a.name: a for a in adapters}
+    total_resolved = 0
+    total_still = 0
+    all_writes: list[dict] = []       # (sheet, row_num, pos, tn, routing)
+
+    for company_name, entries in by_company.items():
+        adapter = adapter_map.get(company_name)
+        if adapter is None:
+            print(f"\nNo adapter for '{company_name}', skipping {len(entries)}.")
+            continue
+
+        print(f"\n{'='*40}")
+        print(f"Company: {company_name}")
+
+        ws_url = adapter.ensure_tab(cdp)
+        cdp.connect_tab(ws_url)
+        if not adapter.check_ready(cdp):
+            print(f"  {company_name} not ready, skipping.")
+            continue
+
+        tns = [e["tn"] for e in entries]
+        results = adapter.query(cdp, tns)
+        res_map = {r.tracking_no: r.routing_info for r in results}
+
+        resolved_tns = set()
+        still_miss: list[dict] = []
+        for e in entries:
+            tn = e["tn"]
+            routing = res_map.get(tn)
+            if routing:
+                resolved_tns.add(tn)
+                total_resolved += 1
+                all_writes.append({
+                    "sheet": e["sheet"], "row_num": e["row_num"],
+                    "company": company_name,
+                    "track_position": e.get("track_position", 1),
+                    "tn": tn, "my_tns": e.get("my_tns", [tn]),
+                    "routing": routing,
+                })
+                print(f"  [{company_name}] {tn} RESOLVED")
+            else:
+                still_miss.append(e)
+                total_still += 1
+                print(f"  [{company_name}] {tn} STILL MISS (x{e.get('miss_count', 0)+1})")
+
+        if resolved_tns:
+            remove_resolved(excel_path, resolved_tns)
+        if still_miss:
+            record_misses(excel_path, still_miss)
+
+    # 批量写回成功的顽固单号
+    if all_writes:
+        _write_stubborn_results(excel_path, all_writes)
+
+    print(f"\n{'='*40}")
+    print("Stubborn Retry Results:")
+    print(f"  Resolved: {total_resolved}")
+    print(f"  Still stuck: {total_still}")
+    if total_still:
+        print(f"  Re-run --retry-stubborn to retry again.")
+
+
+def _write_stubborn_results(excel_path, writes: list[dict]):
+    """批量写回顽固补查结果，按同一单元格合并，单次 open/save。"""
+    import shutil
+    import openpyxl
+
+    backup = excel_path.with_name(f"{excel_path.stem}_备份{excel_path.suffix}")
+    shutil.copy2(excel_path, backup)
+
+    wb = openpyxl.load_workbook(excel_path)
+
+    # 按 (sheet, row_num, track_position) 分组
+    from collections import defaultdict
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for w in writes:
+        groups[(w["sheet"], w["row_num"], w["track_position"])].append(w)
+
+    for (sheet_name, row_num, pos), items in groups.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        track_cols = find_track_columns(ws)
+        col = track_cols.get(pos)
+        if col is None:
+            continue
+
+        existing = str(ws.cell(row=row_num, column=col).value or "")
+        my_tns = items[0].get("my_tns") or [w["tn"] for w in items]
+        # 新内容：每个成功的 tn + routing 块
+        new_blocks = "\n".join(f"{w['tn']}\n{w['routing']}" for w in items)
+        merged = merge_preserve(new_blocks, existing, my_tns)
+        if merged:
+            ws.cell(row=row_num, column=col).value = merged
+
+    wb.save(excel_path)
+    wb.close()
+    print(f"\nWrote {len(writes)} stubborn results back to Excel.")
 
 
 _TN_PATTERN = re.compile(r"^[A-Z0-9]{5,25}$")

@@ -69,7 +69,7 @@ def write_results(excel_path: str | Path, results: list[dict]) -> dict:
                 # 漏查不覆盖：与目标列旧内容按单号合并，本次没查到的单号保留旧块
                 my_tns = r.get("tracking_nos") or []
                 existing = ws.cell(row=r["row_num"], column=target).value
-                merged = _merge_preserve(r["routing_info"], str(existing or ""), my_tns)
+                merged = merge_preserve(r["routing_info"], str(existing or ""), my_tns)
                 if not merged:
                     # 全部未查到且无旧数据 → 跳过，绝不用空值覆盖
                     continue
@@ -122,7 +122,7 @@ def _parse_blocks(text: str) -> dict[str, str]:
     return blocks
 
 
-def _merge_preserve(new_info: str, old_text: str, my_tns: list[str]) -> str:
+def merge_preserve(new_info: str, old_text: str, my_tns: list[str]) -> str:
     """按 my_tns 顺序重建：本次查到的用新块，没查到的保留旧块。"""
     new_b = _parse_blocks(new_info)
     old_b = _parse_blocks(old_text)
@@ -163,7 +163,7 @@ def _ensure_track_columns(ws, need_max: int) -> dict[int, int]:
     缺失的列紧跟当前最后一个物流轨迹列之后插入并写表头；
     所有物流轨迹列统一采用物流轨迹1的列宽。
     """
-    track_cols = _find_track_columns(ws)
+    track_cols = find_track_columns(ws)
     if not track_cols:
         return track_cols
 
@@ -201,7 +201,7 @@ def _ensure_track_columns(ws, need_max: int) -> dict[int, int]:
     return track_cols
 
 
-def _find_track_columns(ws) -> dict[int, int]:
+def find_track_columns(ws) -> dict[int, int]:
     """扫描表头，返回已存在的 {N: 列号} for 物流轨迹N。"""
     cols: dict[int, int] = {}
     for c in range(1, ws.max_column + 1):
