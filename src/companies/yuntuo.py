@@ -35,11 +35,14 @@ class YunTuoAdapter(CompanyAdapter):
         results: dict[str, str | None] = {}
         total = len(tracking_nos)
 
-        # 确保结果页壳（提供可复用的 textarea + 查询按钮）
+        # 确保在结果页壳，且页面已稳定（textarea + 查询按钮就绪）
         url = _val(cdp.evaluate("location.href"), "")
         if "t.17track.net" not in url and tracking_nos:
             cdp.evaluate(f"location.href='{RESULT_URL}{tracking_nos[0]}';")
             time.sleep(6)
+        first = tracking_nos[0] if tracking_nos else ""
+        if not self._page_stable(cdp, first, timeout=8):
+            print(f"  [{self.name}] WARNING: 结果页未就绪，批量可能受影响")
 
         # 1. 分批批量查询
         for start in range(0, total, MAX_BATCH):
@@ -74,6 +77,9 @@ class YunTuoAdapter(CompanyAdapter):
 
     def _query_batch(self, cdp, nums: list[str]) -> dict[str, str]:
         """批量提交并提取，返回 {单号: 时间戳+描述}（仅含自动识别成功的）。"""
+        # 确保页面 UI 就绪（textarea + 按钮已渲染），避免 React 未挂载导致填入静默失败
+        if not self._page_stable(cdp, timeout=8):
+            return {}
         if not self._fill_batch(cdp, nums):
             return {}
         time.sleep(0.6)
@@ -255,20 +261,21 @@ class YunTuoAdapter(CompanyAdapter):
             time.sleep(0.5)
         return "timeout"
 
-    def _page_stable(self, cdp, tracking_no: str, timeout: int = 5) -> bool:
-        """确认页面真正就绪：单号已出现在 body 且 textarea 可交互。
+    def _page_stable(self, cdp, tracking_no: str = "", timeout: int = 5) -> bool:
+        """确认页面真正就绪：body 不含 loading 提示。
 
         17track SPA 在 loading 阶段可能触发 _wait_result 的"同步时间"匹配
-        但实际内容尚未渲染——导致后续提取拿到空/loading 文本。
-        此方法轮询确保 body 内容已稳定（不再含 loading 提示且单号可见）。
+        但实际内容尚未渲染。此方法轮询确认页面已脱离 loading 状态。
+        若 tracking_no 非空，额外要求该单号已出现在 body 中。
         """
+        target_check = f"var hasTarget=b.indexOf('{tracking_no}')>=0;" if tracking_no else "var hasTarget=true;"
         deadline = time.time() + timeout
         while time.time() < deadline:
             r = cdp.evaluate(
                 "(function(){"
                 "var b=document.body.innerText||'';"
                 "var loading=b.indexOf('check the logistics trajectory')>=0;"
-                "var hasTarget=b.indexOf('" + tracking_no + "')>=0;"
+                + target_check +
                 "if(!loading&&hasTarget)return 'ok';"
                 "if(loading)return 'loading';"
                 "return 'wait';"

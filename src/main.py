@@ -12,6 +12,13 @@ import re
 import sys
 from pathlib import Path
 
+# Windows 终端默认 GBK → 强制 stdout 使用 UTF-8，避免中文打印报错
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
+
 try:
     from .cdp_client import CdpClient
     from .companies.ningzhi import NingZhiAdapter
