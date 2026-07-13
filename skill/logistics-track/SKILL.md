@@ -73,6 +73,48 @@ python -m src.main <excel_path> --retry-stubborn
 
 环境变量: `CDP_HOST`，默认 `localhost:9222`
 
+## 直接查询指定单号（不用 Excel）
+
+当用户让你查某几个具体单号时，**不要跑 Excel 流程**，用以下 Python 脚本直接在浏览器里查：
+
+### 查云驼 (999) 单号
+
+```bash
+cd <项目目录>
+python3 -c "
+from src.cdp_client import CdpClient
+from src.companies.yuntuo import YunTuoAdapter
+cdp = CdpClient()
+adapter = YunTuoAdapter()
+ws = adapter.ensure_tab(cdp)
+cdp.connect_tab(ws)
+for tn in ['999260706000543', '999260708000910']:
+    routing = adapter._query_one(cdp, tn)
+    print(f'{tn} → {routing if routing else \"MISS (未查到) — 页面可能需选运输商或单号不存在\"}')
+cdp.close()
+"
+```
+
+### 查宁致 (NZ) 单号
+
+```bash
+cd <项目目录>
+python3 -c "
+from src.cdp_client import CdpClient
+from src.companies.ningzhi import NingZhiAdapter
+cdp = CdpClient()
+adapter = NingZhiAdapter()
+ws = adapter.ensure_tab(cdp)
+cdp.connect_tab(ws)
+for tn in ['NZ2605063839']:
+    routing = adapter._query_one(cdp, tn)
+    print(f'{tn} → {routing if routing else \"MISS (未查到) — 可能页面未登录或单号不存在\"}')
+cdp.close()
+"
+```
+
+**重要**: 查询前确保 Edge 已通过 `.bat` 启动、对应标签页已打开（云驼=17track、宁致=nzhexp 且已登录）。查多个云驼单号时**优先一次全查**，不要每个单号单独开一个 python3 进程——在同一进程里循环更快。
+
 ## 列位映射
 
 | 列 | 0-index | 内容 |
