@@ -12,10 +12,12 @@ import re
 import sys
 from pathlib import Path
 
-# Windows 终端默认 GBK → 强制 stdout 使用 UTF-8，避免中文打印报错
+# Windows 终端默认 GBK → 强制 stdout 使用 UTF-8，避免 print 中文时
+# UnicodeEncodeError 崩溃。errors="replace" 兜底: 万一终端不认 UTF-8，
+# 不可编码字符用 ? 替代而非抛异常（老 cmd.exe 可能仍乱码但不崩）。
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, OSError):
         pass
 
