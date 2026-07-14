@@ -22,7 +22,7 @@ except ImportError:
 MAIN_URL = "https://www.17track.net/zh-cn"
 RESULT_URL = "https://t.17track.net/zh-cn#nums="
 CARRIER_NAME = "愿景征途"
-MAX_BATCH = 20  # 单批提交量（17track 上限 40，取 20 更稳、更礼貌）
+MAX_BATCH = 5  # 单批提交量（17track 上限 40，取 5 更礼貌、避免安全验证）
 
 
 class YunTuoAdapter(CompanyAdapter):

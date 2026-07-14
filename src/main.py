@@ -25,6 +25,7 @@ try:
     from .cdp_client import CdpClient
     from .companies.ningzhi import NingZhiAdapter
     from .companies.yuntuo import YunTuoAdapter
+    from .companies.xiaoman import XiaoManAdapter
     from .excel_reader import find_company_rows, company_position
     from .excel_writer import write_results, merge_preserve, find_track_columns
     from .validation import is_valid_routing
@@ -36,6 +37,7 @@ except ImportError:
     from cdp_client import CdpClient
     from companies.ningzhi import NingZhiAdapter
     from companies.yuntuo import YunTuoAdapter
+    from companies.xiaoman import XiaoManAdapter
     from excel_reader import find_company_rows, company_position
     from excel_writer import write_results, merge_preserve, find_track_columns
     from validation import is_valid_routing
@@ -45,7 +47,7 @@ except ImportError:
     )
 
 # 注册所有公司适配器
-ADAPTERS = [NingZhiAdapter(), YunTuoAdapter()]
+ADAPTERS = [NingZhiAdapter(), YunTuoAdapter(), XiaoManAdapter()]
 
 # 异常检测阈值：查询数 >= N 且成功率 < RATE 判为疑似结构损坏 → 跳过写入保护存量
 ANOMALY_MIN_COUNT = 5

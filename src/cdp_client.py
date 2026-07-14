@@ -85,15 +85,87 @@ class CdpClient:
 
     # ── CDP commands ──────────────────────────────────────────────
 
-    def evaluate(self, expression: str) -> dict:
+    def evaluate(self, expression: str, await_promise: bool = False) -> dict:
         """执行 JavaScript 表达式并返回结果。"""
         return self._send({
             "method": "Runtime.evaluate",
             "params": {
                 "expression": expression,
                 "returnByValue": True,
+                "awaitPromise": await_promise,
             },
         })
+
+    def fetch_api(self, api_url: str, timeout: float = 15.0) -> dict:
+        """在浏览器内通过 fetch() 调用 API，自动携带 Cookie/会话。
+
+        类似象往项目的 CdpClient.fetch_api()，利用浏览器标签页已有的
+        登录态发起请求，从服务器角度看与页面自身的 AJAX 请求无法区分。
+        """
+        js = (
+            "(async()=>{"
+            "try{"
+            f"var r=await fetch('{api_url}',{{headers:{{Accept:'application/json'}}}});"
+            "var d=await r.json();"
+            "return JSON.stringify({ok:r.ok,status:r.status,data:d});"
+            "}catch(e){"
+            "return JSON.stringify({ok:false,error:e.message});"
+            "}"
+            "})()"
+        )
+        deadline = time.time() + timeout
+        last_err = None
+        while time.time() < deadline:
+            result = self.evaluate(js, await_promise=True)
+            value = result.get("result", {}).get("result", {}).get("value")
+            if value is None:
+                last_err = result.get("result", {}).get("result", {}).get("description",
+                           result.get("error", "no value"))
+                time.sleep(0.5)
+                continue
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return {"ok": False, "error": str(value)[:200]}
+        return {"ok": False, "error": f"timeout: {last_err}"}
+
+    def capture_network(self, url_substring: str, timeout: float = 10.0) -> list[dict]:
+        """启用 Network 域，导航后捕获匹配 URL 的请求/响应。
+
+        返回 [{url, method, status, responseBody}] 列表。
+        """
+        self._send({"method": "Network.enable", "params": {"maxTotalBufferSize": 10000000}})
+        # 等待一段时间收集请求
+        time.sleep(timeout)
+        results: list[dict] = []
+        # 读取积压的 WebSocket 消息
+        old_timeout = self._sock.gettimeout() if self._sock else None
+        try:
+            if self._sock:
+                self._sock.settimeout(0.3)
+            for _ in range(200):
+                try:
+                    msg = _read_ws_message(self._sock)
+                except (ConnectionError, BlockingIOError, TimeoutError):
+                    break
+                method = msg.get("method", "")
+                if method == "Network.responseReceived":
+                    params = msg.get("params", {})
+                    resp = params.get("response", {})
+                    url = resp.get("url", "")
+                    if url_substring in url:
+                        req_id = params.get("requestId", "")
+                        results.append({
+                            "url": url,
+                            "method": resp.get("method", ""),
+                            "status": resp.get("status", 0),
+                            "mimeType": resp.get("mimeType", ""),
+                            "requestId": req_id,
+                        })
+        finally:
+            if self._sock and old_timeout is not None:
+                self._sock.settimeout(old_timeout)
+        return results
 
     def click(self, selector: str) -> dict:
         """点击匹配选择器的第一个元素。"""

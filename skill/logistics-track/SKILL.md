@@ -21,7 +21,8 @@ platform: windows
 1. 双击 `bin/物流网站一键启动.bat` → Edge 打开物流网站（CDP 端口 9222）
 2. 宁致（nzhexp）首次需手动登录：**小摊科技 / 816816816**
 3. 云驼（17track）无需登录
-4. 登录后关闭 Edge，再双击 `.bat` 确认登录态保持 → 完成
+4. 小满（xmsdwl）无需登录
+5. 登录后关闭 Edge，再双击 `.bat` 确认登录态保持 → 完成
 
 之后每次使用：双击 `.bat` → 告诉 OpenClaw 要查哪个 Excel。
 
@@ -47,9 +48,11 @@ Skill 自动:
 |------|------|------|----------|
 | 宁致 | NZ | nzhexp.nextsls.com | 逐单查询（需登录） |
 | 云驼 | 999 | 17track.net | 批量查询(20/批) + 单条回退选"愿景征途" |
+| 小满 | XM | xmsdwl.nextsls.com | 逐单查询（无需登录） |
 
-**单号归属**：按前缀匹配（`999`=云驼、`NZ`=宁致），不依赖 J/K 列的公司名（业务填写不规范）。
-**轨迹列**：每家公司独占"物流轨迹N"列，N = 该公司单号在 S 列首次出现的次序。缺列自动新增。
+**单号归属**：按前缀匹配（`999`=云驼、`NZ`=宁致、`XM`=小满），不依赖 J/K 列的公司名（业务填写不规范）。
+**轨迹列**：每家公司独占"物流轨迹N"列，N = 该公司单号在 物流单号 列首次出现的次序。缺列自动新增。
+**列位匹配**：第 2 行表头文字自动匹配（"物流单号""物流轨迹N"），不再硬编码列索引，兼容不同格式 Excel。
 
 ## 脚本
 
@@ -113,7 +116,25 @@ cdp.close()
 "
 ```
 
-**重要**: 查询前确保 Edge 已通过 `.bat` 启动、对应标签页已打开（云驼=17track、宁致=nzhexp 且已登录）。查多个云驼单号时**优先一次全查**，不要每个单号单独开一个 python3 进程——在同一进程里循环更快。
+### 查小满 (XM) 单号
+
+```bash
+cd <项目目录>
+python3 -c "
+from src.cdp_client import CdpClient
+from src.companies.xiaoman import XiaoManAdapter
+cdp = CdpClient()
+adapter = XiaoManAdapter()
+ws = adapter.ensure_tab(cdp)
+cdp.connect_tab(ws)
+for tn in ['XM26070315932', 'XM26070358194']:
+    routing = adapter._query_one(cdp, tn)
+    print(f'{tn} → {routing if routing else \"MISS (未查到) — 页面可能需手动输入单号或单号不存在\"}')
+cdp.close()
+"
+```
+
+**重要**: 查询前确保 Edge 已通过 `.bat` 启动、对应标签页已打开（云驼=17track、宁致=nzhexp 且已登录、小满=xmsdwl）。查多个云驼单号时**优先一次全查**，不要每个单号单独开一个 python3 进程——在同一进程里循环更快。
 
 ## 列位映射
 

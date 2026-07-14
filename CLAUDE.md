@@ -19,6 +19,12 @@
 
 ## 列位映射
 
+列位通过第 2 行表头文字自动匹配（不再硬编码索引）：
+- "物流单号" → 提取单号的来源列
+- "物流轨迹1" / "物流轨迹2" / ... → 回写轨迹的目标列
+
+历史格式（测试文件）列位参考：
+
 | 列 | 内容 | 用途 |
 |---|---|---|
 | J (index 9) | 发货渠道 | 可能含"宁致"（不规范） |
@@ -33,10 +39,17 @@ Logistics_Automation/
 ├── bin/
 │   └── 物流网站一键启动.bat
 ├── src/
-│   ├── excel_reader.py      # 读取 Excel，筛选行，提取单号
-│   ├── cdp_tracker.py       # CDP 操控 nzhexp 查询轨迹
-│   ├── excel_writer.py      # 写回 Excel Y 列
-│   └── main.py              # 主流程编排
+│   ├── excel_reader.py      # 读取 Excel，按表头自动匹配列位，按前缀归属公司
+│   ├── cdp_client.py        # CDP WebSocket 客户端
+│   ├── excel_writer.py      # 按表头匹配物流轨迹N列，写回 Excel
+│   ├── validation.py        # 轨迹数据校验
+│   ├── miss_tracker.py      # 缺失单号追踪 + 顽固补跑
+│   ├── main.py              # 主流程编排
+│   └── companies/
+│       ├── base.py          # CompanyAdapter 抽象基类
+│       ├── ningzhi.py       # 宁致 NZ → nzhexp.nextsls.com（需登录）
+│       ├── yuntuo.py        # 云驼 999 → 17track.net（批量查询）
+│       └── xiaoman.py       # 小满 XM → xmsdwl.nextsls.com（无需登录）
 ├── skill/
 │   └── logistics-track/
 │       └── SKILL.md         # OpenClaw Skill 定义

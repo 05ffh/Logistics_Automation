@@ -1,4 +1,7 @@
-"""读取发货明细表 Excel，按公司筛选行，按前缀提取物流单号。"""
+"""读取发货明细表 Excel，按公司筛选行，按前缀提取物流单号。
+
+列位通过第 2 行表头文字自动匹配，不再硬编码索引。
+"""
 
 from __future__ import annotations
 
@@ -7,11 +10,7 @@ from pathlib import Path
 
 import openpyxl
 
-# 列位 (0-indexed)
-COL_SHIP_CHANNEL = 9   # J列-发货渠道
-COL_SHIP_COMPANY = 10  # K列-发货公司
-COL_TRACKING_NOS = 18  # S列-物流单号
-COL_TRACKING_INFO = 24 # Y列-物流轨迹1
+HEADER_ROW = 2  # 表头所在行
 
 # 承运商前缀 → 公司名（长前缀优先，用于给单号归属公司并排序）
 CARRIER_PREFIXES = [
@@ -19,7 +18,17 @@ CARRIER_PREFIXES = [
     ("HY", "华洋"),
     ("999", "云驼"),
     ("NZ", "宁致"),
+    ("XM", "小满"),
 ]
+
+
+def find_header_column(ws, header_name: str, row: int = HEADER_ROW) -> int | None:
+    """按表头文字查找列索引（0-based），找不到返回 None。"""
+    for c in range(1, ws.max_column + 1):
+        val = ws.cell(row=row, column=c).value
+        if val and str(val).strip() == header_name:
+            return c - 1
+    return None
 
 
 def identify_company(tn: str) -> str:
@@ -63,12 +72,19 @@ def find_company_rows(
         if not sheet_name.strip().isdigit():
             continue
         ws = wb[sheet_name]
+        # 按表头自动匹配列位，找不到回退到旧硬编码值（兼容历史格式）
+        col_tracking_nos = find_header_column(ws, "物流单号")
+        if col_tracking_nos is None:
+            col_tracking_nos = 18  # S列，历史默认
+        col_track_info = find_header_column(ws, "物流轨迹1")
+        if col_track_info is None:
+            col_track_info = 24  # Y列，历史默认
         merged = _merged_value_map(ws)  # 合并单元格锚点值下传（如 K 列发货公司）
         for row_idx in range(3, ws.max_row + 1):
-            tracking_str = _cell_str(ws, row_idx, COL_TRACKING_NOS, merged)
+            tracking_str = _cell_str(ws, row_idx, col_tracking_nos, merged)
             if not tracking_str:
                 continue
-            existing = _cell_str(ws, row_idx, COL_TRACKING_INFO, merged)
+            existing = _cell_str(ws, row_idx, col_track_info, merged)
 
             # 按单号前缀归属公司（J/K 公司名填写不规范，前缀才是权威标识）
             for comp in companies:
