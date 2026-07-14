@@ -1,6 +1,6 @@
 ---
 name: logistics-track
-description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼)，通过 CDP 操控浏览器批量查询运单轨迹，按公司分别写回"物流轨迹N"列。支持缺失追踪和顽固补查
+description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 批量查询。支持缺失追踪和顽固补查
 type: skill
 platform: windows
 ---
@@ -36,7 +36,7 @@ Skill 自动:
   2. 自检各站点是否可查询 (--healthcheck)
   3. 读 Excel → 按单号前缀归属公司（不依赖J/K列公司名）→ 解析合并单元格
   4. 报告: "找到 宁致12行/11个单号, 云驼71行/81个单号, 确认开始？"
-  5. 逐公司 CDP 查询 → 宁致逐单(~1-2分钟)、云驼批量(≤20/批) + 单条回退
+  5. 逐公司查询 → 宁致/小满 fetch API(~0.2s/单号)、云驼批量(≤5/批) + 单条回退
   6. 按公司分别写回"物流轨迹N"列(N=公司在S列首次出现次序)
   7. 缺失单号记录到 _misses.json，方便后续精准补跑
   8. 自动备份 Excel → 显示运行汇总(每家成功率)
@@ -46,9 +46,9 @@ Skill 自动:
 
 | 公司 | 前缀 | 网站 | 查询方式 |
 |------|------|------|----------|
-| 宁致 | NZ | nzhexp.nextsls.com | 逐单查询（需登录） |
-| 云驼 | 999 | 17track.net | 批量查询(20/批) + 单条回退选"愿景征途" |
-| 小满 | XM | xmsdwl.nextsls.com | 逐单查询（无需登录） |
+| 宁致 | NZ | nzhexp.nextsls.com | fetch API（需登录） |
+| 云驼 | 999 | 17track.net | DOM 批量(5/批) + 单条回退选"愿景征途" |
+| 小满 | XM | xmsdwl.nextsls.com | fetch API（无需登录） |
 
 **单号归属**：按前缀匹配（`999`=云驼、`NZ`=宁致、`XM`=小满），不依赖 J/K 列的公司名（业务填写不规范）。
 **轨迹列**：每家公司独占"物流轨迹N"列，N = 该公司单号在 物流单号 列首次出现的次序。缺列自动新增。
@@ -109,9 +109,9 @@ cdp = CdpClient()
 adapter = NingZhiAdapter()
 ws = adapter.ensure_tab(cdp)
 cdp.connect_tab(ws)
-for tn in ['NZ2605063839']:
-    routing = adapter._query_one(cdp, tn)
-    print(f'{tn} → {routing if routing else \"MISS (未查到) — 可能页面未登录或单号不存在\"}')
+results = adapter.query(cdp, ['NZ2605063839'])
+for r in results:
+    print(f'{r.tracking_no} → {r.routing_info if r.routing_info else \"MISS (未查到) — 可能页面未登录或单号不存在\"}')
 cdp.close()
 "
 ```
@@ -127,9 +127,9 @@ cdp = CdpClient()
 adapter = XiaoManAdapter()
 ws = adapter.ensure_tab(cdp)
 cdp.connect_tab(ws)
-for tn in ['XM26070315932', 'XM26070358194']:
-    routing = adapter._query_one(cdp, tn)
-    print(f'{tn} → {routing if routing else \"MISS (未查到) — 页面可能需手动输入单号或单号不存在\"}')
+results = adapter.query(cdp, ['XM26070315932', 'XM26070358194'])
+for r in results:
+    print(f'{r.tracking_no} → {r.routing_info if r.routing_info else \"MISS (未查到) — 页面可能需手动输入单号或单号不存在\"}')
 cdp.close()
 "
 ```
@@ -138,14 +138,16 @@ cdp.close()
 
 ## 列位映射
 
-| 列 | 0-index | 内容 |
-|----|---------|------|
-| J | 9 | 发货渠道（填写不规范，脚本不依赖此项） |
-| K | 10 | 发货公司（填写不规范，脚本不依赖此项） |
-| S | 18 | 物流单号（按前缀归属公司的依据） |
-| Y | 24 | 物流轨迹1（S列第1家公司的轨迹） |
-| Z | 25 | 物流轨迹2（S列第2家公司的轨迹） |
-| … | … | 物流轨迹3+（缺列时自动新增，列宽对齐物流轨迹1） |
+列位通过第 2 行表头文字自动匹配，不再硬编码索引，兼容不同格式 Excel。常见布局参考：
+
+| 表头 | 说明 |
+|------|------|
+| 物流单号 | 多单号换行分隔，按前缀归属公司的依据 |
+| 物流轨迹1 | 第 1 家公司的轨迹 |
+| 物流轨迹2 | 第 2 家公司的轨迹 |
+| 物流轨迹N | 第 N 家，缺列时自动新增（列宽对齐物流轨迹1） |
+
+J/K 列（发货渠道/发货公司）填写不规范，脚本不依赖此项——前缀才是权威标识。
 
 ## 缺失追踪 + 精准补跑
 
@@ -161,7 +163,7 @@ cdp.close()
 
 ## 互动确认点
 
-1. **启动前**: 确认 Edge 已启动且 nzhexp 已登录
+1. **启动前**: 确认 Edge 已启动、nzhexp 已登录、xmsdwl 和 17track 标签页正常
 2. **筛选后**: 报告各公司行数和单号数，确认开始查询
 3. **异常情况**: 某公司成功率异常(<50%) → 醒目警告 + 跳过写入保护存量，提示人工核查
 4. **完成后**: 显示运行汇总 + 缺失追踪概况
