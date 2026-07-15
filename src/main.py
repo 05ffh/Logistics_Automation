@@ -60,17 +60,30 @@ def main():
     retry_stubborn = False
     target_companies: set[str] | None = None
 
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if "--retry-stubborn" in sys.argv:
-        retry_stubborn = True
-
-    # 解析 --company 参数
-    for i, a in enumerate(sys.argv[1:], 1):
-        if a == "--company" and i < len(sys.argv):
+    # 解析 --company 参数并清理 args（必须在过滤 args 之前）
+    raw_args = sys.argv[1:]
+    for i, a in enumerate(raw_args):
+        if a == "--company" and i + 1 < len(raw_args):
             target_companies = set(
-                c.strip() for c in sys.argv[i + 1].split(",") if c.strip()
+                c.strip() for c in raw_args[i + 1].split(",") if c.strip()
             )
             break
+
+    # 过滤 -- 参数：--xxx 和 --company 后面紧接的值都跳过
+    args = []
+    skip_next = False
+    for a in raw_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a.startswith("--"):
+            if a == "--company":
+                skip_next = True
+            continue
+        args.append(a)
+
+    if "--retry-stubborn" in sys.argv:
+        retry_stubborn = True
 
     if not args:
         print("Usage: python -m src.main <excel_path> [sheet_names] [--company 小满,宁致]")
