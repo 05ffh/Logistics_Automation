@@ -1,14 +1,13 @@
 """云驼物流适配器 - 17track.net。
 
-17track 结果页 textarea 原生支持批量（每行一个单号，最多 40 个），本项目取 20/批更稳，策略为:
-    1. 批量填入 ≤20 个单号 → 点"查询(N)"按钮
-    2. 等所有卡片渲染，遍历 [data-state] 卡片一次性提取 {单号: 最新时间戳+描述}
-    3. 对未命中的单号（需手动选运输商 / 加载慢）回退到单条 _query_one（含选"愿景征途"）
+逐单查询策略：批量模式对"愿景征途"自动识别几乎不命中（"冷"状态），
+批量 → 回退的双阶段反而不如逐单高效。改为逐单查询，每条含选运输商兜底。
 """
 
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 
@@ -24,52 +23,30 @@ except ImportError:
 MAIN_URL = "https://www.17track.net/zh-cn"
 RESULT_URL = "https://t.17track.net/zh-cn#nums="
 CARRIER_NAME = "愿景征途"
-MAX_BATCH = 5  # 单批提交量（17track 上限 40，取 5 更礼貌、避免安全验证）
+# 象往式礼貌间隔：逐单之间随机 3-6s，避免连续请求触发安全验证
+QUERY_INTERVAL_MIN = 3.0
+QUERY_INTERVAL_MAX = 6.0
 
 
 class YunTuoAdapter(CompanyAdapter):
     name = "云驼"
     prefix = "999"
-    batch_size = MAX_BATCH
+    batch_size = 1
     canary_number = "999260530000730"  # 自检用已知单号（失效时更新）
 
     def query(self, cdp, tracking_nos: list[str]) -> list[TrackingResult]:
         results: dict[str, str | None] = {}
         total = len(tracking_nos)
 
-        # 确保在结果页壳，且页面已稳定（textarea + 查询按钮就绪）
-        url = _val(cdp.evaluate("location.href"), "")
-        if "t.17track.net" not in url and tracking_nos:
-            cdp.evaluate(f"location.href='{RESULT_URL}{tracking_nos[0]}';")
-            time.sleep(6)
-        first = tracking_nos[0] if tracking_nos else ""
-        if not self._page_stable(cdp, first, timeout=8):
-            print(f"  [{self.name}] WARNING: 结果页未就绪，批量可能受影响")
+        for i, tn in enumerate(tracking_nos):
+            if i > 0:
+                interval = random.uniform(QUERY_INTERVAL_MIN, QUERY_INTERVAL_MAX)
+                time.sleep(interval)
 
-        # 1. 分批批量查询
-        for start in range(0, total, MAX_BATCH):
-            batch = tracking_nos[start:start + MAX_BATCH]
-            found = self._query_batch(cdp, batch)
-            for tn in batch:
-                if found.get(tn):
-                    results[tn] = found[tn]
-            hit = sum(1 for tn in batch if results.get(tn))
-            print(f"  [{self.name}] 批量 {start+1}-{start+len(batch)}/{total}: "
-                  f"命中 {hit}/{len(batch)}")
-
-        # 2. 回退：未命中的单号逐个查（处理选运输商 / 慢加载）
-        misses = [tn for tn in tracking_nos if not results.get(tn)]
-        if misses:
-            print(f"  [{self.name}] 回退单条查询 {len(misses)} 个未命中...")
-            for i, tn in enumerate(misses):
-                # 批量查询后页面残留 → 经主页中转重置 SPA 状态，再定向到结果页
-                cdp.evaluate(f"location.href='{MAIN_URL}';")
-                time.sleep(3)
-                cdp.evaluate(f"location.href='{RESULT_URL}{tn}';")
-                time.sleep(4)
-                results[tn] = self._query_one(cdp, tn)
-                st = "OK" if results.get(tn) else "MISS"
-                print(f"  [{self.name}] 回退 {i+1}/{len(misses)} {tn} {st}")
+            routing = self._query_one(cdp, tn)
+            results[tn] = routing
+            status = "OK" if routing else "MISS"
+            print(f"  [{self.name}] {i+1}/{total} {tn} {status}")
 
         ok = sum(1 for tn in tracking_nos if results.get(tn))
         print(f"  [{self.name}] 合计 {ok}/{total} OK")
