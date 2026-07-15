@@ -18,8 +18,10 @@ from .base import CompanyAdapter, TrackingResult
 
 try:
     from ..validation import is_valid_routing
+    from ..cdp_util import val
 except ImportError:
     from validation import is_valid_routing
+    from cdp_util import val
 
 XM_DOMAIN = "xmsdwl.nextsls.com"
 TRACKING_URL = "https://xmsdwl.nextsls.com/tracking/app#/tracking"
@@ -39,7 +41,7 @@ class XiaoManAdapter(CompanyAdapter):
     def check_ready(self, cdp) -> bool:
         cdp.evaluate(f"window.location.href='{TRACKING_URL}';")
         time.sleep(3)
-        url = _val(cdp.evaluate("window.location.href"), "")
+        url = val(cdp.evaluate("window.location.href"), "")
         return XM_DOMAIN in url
 
     def query(self, cdp, tracking_nos: list[str]) -> list[TrackingResult]:
@@ -47,7 +49,7 @@ class XiaoManAdapter(CompanyAdapter):
         total = len(tracking_nos)
 
         # 确保标签页在小满域上（fetch 需要同源 Cookie）
-        url = _val(cdp.evaluate("window.location.href"), "")
+        url = val(cdp.evaluate("window.location.href"), "")
         if XM_DOMAIN not in url:
             cdp.evaluate(f"window.location.href='{TRACKING_URL}';")
             time.sleep(3)
@@ -119,5 +121,3 @@ class XiaoManAdapter(CompanyAdapter):
             return None
 
 
-def _val(cdp_result: dict, default=None):
-    return cdp_result.get("result", {}).get("result", {}).get("value", default)

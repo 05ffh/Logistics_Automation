@@ -29,6 +29,11 @@ class CompanyAdapter(ABC):
         """批量查询物流单号，返回每条的最新路由信息。"""
         ...
 
+    @abstractmethod
+    def ensure_tab(self, cdp) -> str:
+        """找到或打开本公司的浏览器标签页，返回 WebSocket URL。"""
+        ...
+
     def check_ready(self, cdp) -> bool:
         """检查前置条件（登录、页面可达等），返回是否就绪。"""
         return True

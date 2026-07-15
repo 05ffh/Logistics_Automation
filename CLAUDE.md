@@ -2,35 +2,54 @@
 
 ## 项目概述
 
-物流轨迹自动查询系统。读取共享 Excel 中的发货明细，通过 CDP 操控 Edge 在宁致物流网站上批量查询运单轨迹，将最新路由信息写回 Excel。
+物流轨迹自动查询系统。读取共享 Excel 中的发货明细，通过 CDP 操控 Edge 浏览器在物流网站查询运单轨迹，将最新路由信息按公司写回"物流轨迹N"列。
 
-**对比象往**: 物流项目不需要 MySQL，流程是 Excel → 查网站 → 写回 Excel。
+当前支持三家公司：宁致(NZ)、云驼(999)、小满(XM)。采用适配器模式，可扩展。
 
 ## 核心架构
 
 ```
 同事的 Windows 电脑:
-├── .bat (启动 Edge + CDP 9222 + 8 个物流网站)
+├── .bat (启动 Edge + CDP 9222 + 物流网站标签页)
 └── OpenClaw + logistics-track Skill
-    ├── 读 Excel → 筛选宁致行 → 提取 NZ 单号
-    ├── CDP → localhost:9222 → nzhexp 查询
-    └── 写回 Excel Y 列
+    ├── 读 Excel → 按表头自动匹配列位 → 按前缀归属公司
+    ├── CDP → localhost:9222 → 逐公司查询
+    │   宁致/小满: fetch API 调内部 JSON 接口 (~0.2s/单号)
+    │   云驼: DOM 批量 textarea 填入 (5/批) + 单条回退选运输商
+    └── 按 track_position 写回对应物流轨迹N列
+```
+
+## 查询策略
+
+| 公司 | 方式 | 说明 |
+|------|------|------|
+| 宁致 | fetch API | 浏览器内 fetch() 调 `/tracking/app?inajax=1&tracking_number=NZ...` |
+| 小满 | fetch API | 同上，调 `xmsdwl.nextsls.com` 同一端点 |
+| 云驼 | DOM 批量 | 17track 无内部 API，保留 DOM 方式 |
+
+fetch API 策略借鉴象往项目：fetch 在浏览器内执行，携带完整 Cookie/会话，
+从服务器角度看与页面自身的 AJAX 请求无法区分，零 bot 检测风险。
+
+## 筛选逻辑 (当前)
+
+```
+遍历数字命名的 Sheet 每一行:
+  按第 2 行表头找到"物流单号"列
+  从该列拆出所有单号（换行分隔）
+  按前缀归属公司: NZ→宁致, 999→云驼, XM→小满, HY→华洋, HYC→华运昌
+  → 不依赖 J/K 列（业务填写不规范）
 ```
 
 ## 列位映射
 
-列位通过第 2 行表头文字自动匹配（不再硬编码索引）：
+列位通过第 2 行表头文字自动匹配，不再硬编码索引：
 - "物流单号" → 提取单号的来源列
-- "物流轨迹1" / "物流轨迹2" / ... → 回写轨迹的目标列
+- "物流轨迹1/2/N" → 回写轨迹的目标列
 
-历史格式（测试文件）列位参考：
+找不到表头时回退到历史默认值（物流单号=S/col19，物流轨迹1=Y/col25）。
 
-| 列 | 内容 | 用途 |
-|---|---|---|
-| J (index 9) | 发货渠道 | 可能含"宁致"（不规范） |
-| K (index 10) | 发货公司 | 应含"宁致"（规范） |
-| S (index 18) | 物流单号 | 多单号换行分隔，取NZ前缀 |
-| Y (index 24) | 物流轨迹1 | 回写最新路由信息 |
+每家发货公司独占一个"物流轨迹N"列，N = 该公司单号在物流单号列首次出现的次序。
+缺列时紧跟最后一个物流轨迹列后 insert_cols 插入。
 
 ## 项目结构
 
@@ -39,30 +58,33 @@ Logistics_Automation/
 ├── bin/
 │   └── 物流网站一键启动.bat
 ├── src/
-│   ├── excel_reader.py      # 读取 Excel，按表头自动匹配列位，按前缀归属公司
-│   ├── cdp_client.py        # CDP WebSocket 客户端
-│   ├── excel_writer.py      # 按表头匹配物流轨迹N列，写回 Excel
-│   ├── validation.py        # 轨迹数据校验
-│   ├── miss_tracker.py      # 缺失单号追踪 + 顽固补跑
-│   ├── main.py              # 主流程编排
+│   ├── cdp_client.py        # CDP WebSocket + fetch_api()
+│   ├── cdp_util.py           # CDP 工具函数 (val)
+│   ├── excel_reader.py       # 读取 + 表头自动匹配 + 前缀归属
+│   ├── excel_writer.py       # 按公司写物流轨迹N列 + 备份
+│   ├── validation.py         # 轨迹数据校验 is_valid_routing
+│   ├── miss_tracker.py       # 缺失单号追踪 + 顽固补跑
+│   ├── main.py               # 主流程编排 + healthcheck + retry-stubborn
 │   └── companies/
-│       ├── base.py          # CompanyAdapter 抽象基类
-│       ├── ningzhi.py       # 宁致 NZ → nzhexp.nextsls.com（需登录）
-│       ├── yuntuo.py        # 云驼 999 → 17track.net（批量查询）
-│       └── xiaoman.py       # 小满 XM → xmsdwl.nextsls.com（无需登录）
-├── skill/
-│   └── logistics-track/
-│       └── SKILL.md         # OpenClaw Skill 定义
+│       ├── base.py           # CompanyAdapter 抽象基类
+│       ├── ningzhi.py        # 宁致 NZ → fetch API
+│       ├── yuntuo.py         # 云驼 999 → DOM 批量
+│       └── xiaoman.py        # 小满 XM → fetch API
+├── skill/logistics-track/SKILL.md
 └── requirements.txt
 ```
 
-## 筛选逻辑
+## 脚本
 
-```
-遍历 Sheet 每行:
-  J列 (index 9) 或 K列 (index 10) 包含 "宁致" → 命中
-  从 S列 (index 18) 拆出所有单号 → 过滤 NZ 前缀
-  → 这些是宁致的物流单号
+```bash
+# 正常查询（全量）
+python -m src.main <excel_path> [sheet_names]
+
+# 健康自检（各站点 canary 验证）
+python -m src.main --healthcheck
+
+# 顽固补跑（只查 miss_count>=2 的单号）
+python -m src.main <excel_path> --retry-stubborn
 ```
 
 ## 平台差异
@@ -71,6 +93,16 @@ Logistics_Automation/
 |---|---|---|
 | CDP 地址 | `172.28.190.60:9222` | `localhost:9222` |
 | Excel 路径 | `/mnt/c/Users/.../` | `C:\Users\...\` |
-| Python | WSL 内置 | OpenClaw 内置 |
+| Python 命令 | `python3` | `python` |
+| 编码 | UTF-8 (原生) | GBK → stdout 强制 UTF-8 |
 
-`CDP_HOST` 环境变量控制 CDP 地址，默认 `localhost:9222`，WSL 下设为 Windows IP。
+`CDP_HOST` 环境变量控制 CDP 地址，默认 `localhost:9222`。
+
+## 稳健性设计
+
+- **数据校验**: is_valid_routing 拦截页面改版产生的垃圾数据
+- **漏查不覆盖**: merge_preserve 按单号合并新旧，本次未查到保留旧值
+- **异常检测**: ≥5 单且成功率 <50% → 跳过写入保护存量
+- **金丝雀自检**: --healthcheck 用已知单号预验证各站点
+- **缺失追踪**: _misses.json 记录缺失，miss_count≥2 判顽固
+- **自动备份**: 每次写入前自动备份 Excel

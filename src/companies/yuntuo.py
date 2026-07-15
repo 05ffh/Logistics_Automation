@@ -16,8 +16,10 @@ from .base import CompanyAdapter, TrackingResult
 
 try:
     from ..validation import is_valid_routing
+    from ..cdp_util import val as _val
 except ImportError:
     from validation import is_valid_routing
+    from cdp_util import val as _val
 
 MAIN_URL = "https://www.17track.net/zh-cn"
 RESULT_URL = "https://t.17track.net/zh-cn#nums="
@@ -353,5 +355,3 @@ def _clean(text: str) -> str:
     return " ".join(lines)
 
 
-def _val(cdp_result: dict, default=None):
-    return cdp_result.get("result", {}).get("result", {}).get("value", default)

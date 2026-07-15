@@ -18,8 +18,10 @@ from .base import CompanyAdapter, TrackingResult
 
 try:
     from ..validation import is_valid_routing
+    from ..cdp_util import val
 except ImportError:
     from validation import is_valid_routing
+    from cdp_util import val
 
 NZHEXP_DOMAIN = "nzhexp.nextsls.com"
 NZHEXP_SHIPMENT_URL = "http://nzhexp.nextsls.com/tms/wos/shipment"
@@ -40,7 +42,7 @@ class NingZhiAdapter(CompanyAdapter):
         """通过导航到运单页检查是否被重定向到登录。"""
         cdp.evaluate(f"window.location.href='{NZHEXP_SHIPMENT_URL}?page=1&pageSize=30';")
         time.sleep(3)
-        url = _val(cdp.evaluate("window.location.href"), "")
+        url = val(cdp.evaluate("window.location.href"), "")
         return "/login" not in url
 
     def query(self, cdp, tracking_nos: list[str]) -> list[TrackingResult]:
@@ -48,7 +50,7 @@ class NingZhiAdapter(CompanyAdapter):
         total = len(tracking_nos)
 
         # 确保标签页在宁致域上（fetch 需要同源 Cookie）
-        url = _val(cdp.evaluate("window.location.href"), "")
+        url = val(cdp.evaluate("window.location.href"), "")
         if NZHEXP_DOMAIN not in url:
             cdp.evaluate(f"window.location.href='{NZHEXP_SHIPMENT_URL}?page=1&pageSize=30';")
             time.sleep(3)
@@ -114,5 +116,3 @@ class NingZhiAdapter(CompanyAdapter):
             return None
 
 
-def _val(cdp_result: dict, default=None):
-    return cdp_result.get("result", {}).get("result", {}).get("value", default)

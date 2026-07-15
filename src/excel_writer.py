@@ -79,7 +79,12 @@ def write_results(excel_path: str | Path, results: list[dict]) -> dict:
             except Exception:
                 errors += 1
 
-    wb.save(excel_path)
+    try:
+        wb.save(excel_path)
+    except (PermissionError, OSError) as e:
+        wb.close()
+        return {"updated": 0, "errors": errors, "backup": str(backup_path),
+                "locked": True, "save_error": str(e)}
     wb.close()
     return {"updated": updated, "errors": errors, "backup": str(backup_path)}
 

@@ -28,7 +28,6 @@ try:
     from .companies.xiaoman import XiaoManAdapter
     from .excel_reader import find_company_rows, company_position
     from .excel_writer import write_results, merge_preserve, find_track_columns
-    from .validation import is_valid_routing
     from .miss_tracker import (
         get_misses_path, load_misses, record_misses,
         remove_resolved, get_stubborn, print_miss_summary, MISS_THRESHOLD,
@@ -40,7 +39,6 @@ except ImportError:
     from companies.xiaoman import XiaoManAdapter
     from excel_reader import find_company_rows, company_position
     from excel_writer import write_results, merge_preserve, find_track_columns
-    from validation import is_valid_routing
     from miss_tracker import (
         get_misses_path, load_misses, record_misses,
         remove_resolved, get_stubborn, print_miss_summary, MISS_THRESHOLD,
@@ -218,10 +216,13 @@ def main():
                 })
 
         row["routing_info"] = "\n".join(blocks)
-        # 该公司在 S 列首次出现的次序 → 写入第几个物流轨迹列
-        pos = company_position(
-            row.get("all_tracking_nos") or my_tns, company
-        )
+        # 该公司在物流单号列首次出现的次序 → 写入第几个物流轨迹列
+        all_tns = row.get("all_tracking_nos")
+        if not all_tns:
+            print(f"WARNING: Row {row['row_num']} sheet {row['sheet']} has "
+                  f"empty all_tracking_nos, skipping to protect data.")
+            continue
+        pos = company_position(all_tns, company)
         row["track_position"] = pos
         # 补上该行该公司的 track_position
         for me in missed_entries:
@@ -411,7 +412,10 @@ def _write_stubborn_results(excel_path, writes: list[dict]):
         if merged:
             ws.cell(row=row_num, column=col).value = merged
 
-    wb.save(excel_path)
+    try:
+        wb.save(excel_path)
+    except (PermissionError, OSError) as e:
+        print(f"ERROR: Cannot save Excel. File may be locked: {e}")
     wb.close()
     print(f"\nWrote {len(writes)} stubborn results back to Excel.")
 
