@@ -1,8 +1,12 @@
 """物流轨迹查询 - 主流程（多公司支持）。
 
 用法:
-    python -m src.main <excel_path>              # 处理所有 sheet + 所有公司
-    python -m src.main <excel_path> 202605       # 只处理指定 sheet
+    python -m src.main <excel_path>                         # 所有 sheet + 所有公司
+    python -m src.main <excel_path> 202605                  # 只处理指定 sheet
+    python -m src.main <excel_path> --company 小满           # 只查小满
+    python -m src.main <excel_path> --company 小满,宁致      # 查小满和宁致
+    python -m src.main --healthcheck                         # 健康自检
+    python -m src.main <excel_path> --retry-stubborn          # 顽固补跑
 """
 
 from __future__ import annotations
@@ -54,15 +58,37 @@ ANOMALY_MIN_RATE = 0.5
 
 def main():
     retry_stubborn = False
-    args = [a for a in sys.argv[1:] if not a.startswith("--retry-stubborn")]
+    target_companies: set[str] | None = None
+
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if "--retry-stubborn" in sys.argv:
         retry_stubborn = True
 
+    # 解析 --company 参数
+    for i, a in enumerate(sys.argv[1:], 1):
+        if a == "--company" and i < len(sys.argv):
+            target_companies = set(
+                c.strip() for c in sys.argv[i + 1].split(",") if c.strip()
+            )
+            break
+
     if not args:
-        print("Usage: python -m src.main <excel_path> [sheet_names]")
+        print("Usage: python -m src.main <excel_path> [sheet_names] [--company 小满,宁致]")
         print("       python -m src.main <excel_path> --retry-stubborn")
         print("       python -m src.main --healthcheck")
+        available = ", ".join(a.name for a in ADAPTERS)
+        print(f"Available companies: {available}")
         sys.exit(1)
+
+    # 按 --company 过滤适配器
+    adapters = ADAPTERS
+    if target_companies:
+        adapters = [a for a in ADAPTERS if a.name in target_companies]
+        if not adapters:
+            print(f"No matching adapters for: {target_companies}")
+            print(f"Available: {', '.join(a.name for a in ADAPTERS)}")
+            sys.exit(1)
+        print(f"Companies: {', '.join(a.name for a in adapters)}")
 
     # 连接 CDP
     cdp_host = os.environ.get("CDP_HOST", "localhost:9222")
@@ -78,7 +104,7 @@ def main():
         except Exception:
             print("ERROR: Cannot reach Edge CDP. Is Edge running with --remote-debugging-port=9222?")
             sys.exit(1)
-        ok = run_healthcheck(cdp)
+        ok = run_healthcheck(cdp, adapters)
         cdp.close()
         sys.exit(0 if ok else 1)
 
@@ -93,7 +119,7 @@ def main():
 
     # 顽固补跑模式
     if retry_stubborn:
-        run_retry_stubborn(excel_path, cdp, ADAPTERS)
+        run_retry_stubborn(excel_path, cdp, adapters)
         cdp.close()
         return
 
@@ -108,7 +134,7 @@ def main():
 
     # 2. 读取 Excel
     print(f"Reading Excel: {excel_path}")
-    company_configs = [{"name": a.name, "prefix": a.prefix} for a in ADAPTERS]
+    company_configs = [{"name": a.name, "prefix": a.prefix} for a in adapters]
     all_rows = find_company_rows(excel_path, company_configs)
     if target_sheets:
         all_rows = [r for r in all_rows if r["sheet"] in target_sheets]
@@ -123,7 +149,7 @@ def main():
     for r in all_rows:
         by_company.setdefault(r["company"], []).append(r)
 
-    adapter_map = {a.name: a for a in ADAPTERS}
+    adapter_map = {a.name: a for a in adapters}
 
     # 3. 逐公司查询
     all_results: dict[str, dict[str, str | None]] = {}  # {company: {tn: routing}}
@@ -262,7 +288,7 @@ def main():
     cdp.close()
 
 
-def run_healthcheck(cdp) -> bool:
+def run_healthcheck(cdp, adapters: list) -> bool:
     """金丝雀自检：用已知单号验证各站点结构是否还能正常抓取。
 
     任一公司拿不到合法轨迹，说明该站点可能改版/需重新登录 → 返回 False。
@@ -270,7 +296,7 @@ def run_healthcheck(cdp) -> bool:
     print(f"\n{'='*40}")
     print("健康自检 (canary)...")
     all_ok = True
-    for adapter in ADAPTERS:
+    for adapter in adapters:
         canary = getattr(adapter, "canary_number", None)
         if not canary:
             print(f"  {adapter.name}: 跳过（未配置 canary 单号）")

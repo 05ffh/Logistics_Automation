@@ -60,6 +60,10 @@ Skill 自动:
 # 正常查询（全量，自动记账缺失单号）
 python -m src.main <excel_path> [sheet_names]
 
+# 只查指定公司
+python -m src.main <excel_path> --company 小满
+python -m src.main <excel_path> --company 小满,宁致
+
 # 健康自检（跑前先验证各站点是否正常）
 python -m src.main --healthcheck
 
@@ -71,6 +75,7 @@ python -m src.main <excel_path> --retry-stubborn
 |------|------|
 | `excel_path` | Excel 文件路径（必需） |
 | `sheet_names` | 要处理的 sheet 名称，逗号分隔（可选） |
+| `--company 小满,宁致` | 只查指定公司，逗号分隔（可选，默认全查） |
 | `--healthcheck` | 金丝雀自检，用已知单号验证各站点结构是否还通 |
 | `--retry-stubborn` | 只查 miss_count>=2 的顽固单号，不全量跑 |
 
