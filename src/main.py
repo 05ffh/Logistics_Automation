@@ -36,6 +36,7 @@ try:
         get_misses_path, load_misses, record_misses,
         remove_resolved, get_stubborn, print_miss_summary, MISS_THRESHOLD,
     )
+    from .validation import is_valid_routing
 except ImportError:
     from cdp_client import CdpClient
     from companies.ningzhi import NingZhiAdapter
@@ -47,6 +48,7 @@ except ImportError:
         get_misses_path, load_misses, record_misses,
         remove_resolved, get_stubborn, print_miss_summary, MISS_THRESHOLD,
     )
+    from validation import is_valid_routing
 
 # 注册所有公司适配器
 ADAPTERS = [NingZhiAdapter(), YunTuoAdapter(), XiaoManAdapter()]
@@ -84,6 +86,8 @@ def main():
 
     if "--retry-stubborn" in sys.argv:
         retry_stubborn = True
+    if "--healthcheck" in sys.argv:
+        args.insert(0, "--healthcheck")
 
     if not args:
         print("Usage: python -m src.main <excel_path> [sheet_names] [--company 小满,宁致]")

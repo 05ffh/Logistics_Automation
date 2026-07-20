@@ -48,6 +48,10 @@ class XiaoManAdapter(CompanyAdapter):
         results: dict[str, str | None] = {}
         total = len(tracking_nos)
 
+        # 刷新页面确保 JS 上下文新鲜（长时间打开的标签页可能导致 awaitPromise 超时）
+        cdp.evaluate("location.reload()")
+        time.sleep(4)
+
         # 确保标签页在小满域上（fetch 需要同源 Cookie）
         url = val(cdp.evaluate("window.location.href"), "")
         if XM_DOMAIN not in url:

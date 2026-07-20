@@ -79,6 +79,8 @@ def write_results(excel_path: str | Path, results: list[dict]) -> dict:
             except Exception:
                 errors += 1
 
+        _normalize_sheet(ws)
+
     try:
         wb.save(excel_path)
     except (PermissionError, OSError) as e:
@@ -215,4 +217,44 @@ def find_track_columns(ws) -> dict[int, int]:
             suffix = str(v)[len(TRACK_HEADER):].strip()
             if suffix.isdigit():
                 cols[int(suffix)] = c
+    return cols
+
+
+def _normalize_sheet(ws) -> None:
+    """统一数据行格式：行高自适应 + 内容列自动换行。
+
+    修复业务 Excel 中 81 行起行高固定 22pt 导致多行内容被截断的问题，
+    将所有数据行格式统一为 46~80 行的标准：行高自动、关键列 wrap。
+    """
+    from openpyxl.styles import Alignment
+
+    wrap_align = Alignment(wrap_text=True, vertical="top")
+
+    # 内容列：含长文本/多行数据的列
+    content_cols = _find_content_columns(ws)
+
+    for row_idx in range(3, ws.max_row + 1):
+        # 行高恢复自动
+        rd = ws.row_dimensions.get(row_idx)
+        if rd:
+            rd.height = None
+
+        # 内容列设置自动换行
+        for col in content_cols:
+            cell = ws.cell(row=row_idx, column=col)
+            if cell.value and not cell.alignment.wrapText:
+                cell.alignment = wrap_align
+
+
+def _find_content_columns(ws) -> list[int]:
+    """根据表头识别需要自动换行的内容列。"""
+    content_headers = {
+        "成品编码", "sku", "备注", "货件号", "物流单号",
+        "物流轨迹1", "物流轨迹2", "物流轨迹3", "物流轨迹4",
+    }
+    cols = []
+    for c in range(1, ws.max_column + 1):
+        h = str(ws.cell(row=HEADER_ROW, column=c).value or "").strip()
+        if h in content_headers or h.startswith("物流轨迹"):
+            cols.append(c)
     return cols

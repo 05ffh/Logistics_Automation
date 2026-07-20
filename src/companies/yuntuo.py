@@ -172,7 +172,13 @@ class YunTuoAdapter(CompanyAdapter):
             return routing
 
         # 5. 需手动选运输商 → 点"愿景征途"
-        if state == "carrier" or self._select_carrier(cdp):
+        if state == "carrier":
+            self._select_carrier(cdp)
+            self._wait_result(cdp, timeout=8, want="timeline")
+            time.sleep(1)
+            return self._extract_routing(cdp, tracking_no)
+
+        if self._select_carrier(cdp):
             self._wait_result(cdp, timeout=8, want="timeline")
             time.sleep(1)
             return self._extract_routing(cdp, tracking_no)
