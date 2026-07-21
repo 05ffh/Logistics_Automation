@@ -221,17 +221,19 @@ def find_track_columns(ws) -> dict[int, int]:
 
 
 def _normalize_sheet(ws) -> None:
-    """统一数据行格式：行高自适应 + 内容列自动换行。
+    """统一数据行格式：行高自适应 + 内容列自动换行 + 轨迹列等线居中。
 
     修复业务 Excel 中 81 行起行高固定 22pt 导致多行内容被截断的问题，
-    将所有数据行格式统一为 46~80 行的标准：行高自动、关键列 wrap。
+    将所有数据行格式统一为 46~80 行的标准：行高自动、关键列 wrap、
+    轨迹列字体等线 + 水平垂直居中。
     """
-    from openpyxl.styles import Alignment
+    from openpyxl.styles import Alignment, Font
 
     wrap_align = Alignment(wrap_text=True, vertical="top")
+    track_align = Alignment(wrap_text=True, vertical="center", horizontal="center")
+    track_font = Font(name="等线")
 
-    # 内容列：含长文本/多行数据的列
-    content_cols = _find_content_columns(ws)
+    content_cols, track_cols = _find_content_columns(ws)
 
     for row_idx in range(3, ws.max_row + 1):
         # 行高恢复自动
@@ -245,16 +247,25 @@ def _normalize_sheet(ws) -> None:
             if cell.value and not cell.alignment.wrapText:
                 cell.alignment = wrap_align
 
+        # 轨迹列：等线字体 + 居中 + 自动换行
+        for col in track_cols:
+            cell = ws.cell(row=row_idx, column=col)
+            if cell.value:
+                cell.alignment = track_align
+                cell.font = track_font
 
-def _find_content_columns(ws) -> list[int]:
-    """根据表头识别需要自动换行的内容列。"""
+
+def _find_content_columns(ws) -> tuple[list[int], list[int]]:
+    """返回 (内容列, 轨迹列)，根据表头识别。"""
     content_headers = {
         "成品编码", "sku", "备注", "货件号", "物流单号",
-        "物流轨迹1", "物流轨迹2", "物流轨迹3", "物流轨迹4",
     }
-    cols = []
+    content_cols = []
+    track_cols = []
     for c in range(1, ws.max_column + 1):
         h = str(ws.cell(row=HEADER_ROW, column=c).value or "").strip()
-        if h in content_headers or h.startswith("物流轨迹"):
-            cols.append(c)
-    return cols
+        if h in content_headers:
+            content_cols.append(c)
+        if h.startswith("物流轨迹"):
+            track_cols.append(c)
+    return content_cols, track_cols
