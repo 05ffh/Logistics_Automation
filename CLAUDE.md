@@ -4,7 +4,7 @@
 
 物流轨迹自动查询系统。读取共享 Excel 中的发货明细，通过 CDP 操控 Edge 浏览器在物流网站查询运单轨迹，将最新路由信息按公司写回"物流轨迹N"列。
 
-当前支持三家公司：宁致(NZ)、云驼(999)、小满(XM)。采用适配器模式，可扩展。
+当前支持三家公司：宁致(NZ)、云驼(999)、小满(XM)。采用适配器模式，可扩展。另含数据录入模块(data_entry.py)，将半结构化物流文本一键解析插入 Excel。
 
 ## 核心架构
 
@@ -15,7 +15,7 @@
     ├── 读 Excel → 按表头自动匹配列位 → 按前缀归属公司
     ├── CDP → localhost:9222 → 逐公司查询
     │   宁致/小满: fetch API 调内部 JSON 接口 (~0.2s/单号)
-    │   云驼: DOM 批量 textarea 填入 (5/批) + 单条回退选运输商
+    │   云驼: DOM 逐单查询 + 单条回退选运输商
     └── 按 track_position 写回对应物流轨迹N列
 ```
 
@@ -25,7 +25,7 @@
 |------|------|------|
 | 宁致 | fetch API | 浏览器内 fetch() 调 `/tracking/app?inajax=1&tracking_number=NZ...` |
 | 小满 | fetch API | 同上，调 `xmsdwl.nextsls.com` 同一端点 |
-| 云驼 | DOM 批量 | 17track 无内部 API，保留 DOM 方式 |
+| 云驼 | DOM 逐单 | 17track 无内部 API，保留 DOM 方式 |
 
 fetch API 策略借鉴象往项目：fetch 在浏览器内执行，携带完整 Cookie/会话，
 从服务器角度看与页面自身的 AJAX 请求无法区分，零 bot 检测风险。
@@ -60,6 +60,7 @@ Logistics_Automation/
 ├── src/
 │   ├── cdp_client.py        # CDP WebSocket + fetch_api()
 │   ├── cdp_util.py           # CDP 工具函数 (val)
+│   ├── data_entry.py         # 半结构化物流文本解析 + 自动填入 Excel
 │   ├── excel_reader.py       # 读取 + 表头自动匹配 + 前缀归属
 │   ├── excel_writer.py       # 按公司写物流轨迹N列 + 备份
 │   ├── validation.py         # 轨迹数据校验 is_valid_routing
@@ -68,7 +69,7 @@ Logistics_Automation/
 │   └── companies/
 │       ├── base.py           # CompanyAdapter 抽象基类
 │       ├── ningzhi.py        # 宁致 NZ → fetch API
-│       ├── yuntuo.py         # 云驼 999 → DOM 批量
+│       ├── yuntuo.py         # 云驼 999 → DOM 逐单
 │       └── xiaoman.py        # 小满 XM → fetch API
 ├── skill/logistics-track/SKILL.md
 └── requirements.txt
@@ -80,11 +81,17 @@ Logistics_Automation/
 # 正常查询（全量）
 python -m src.main <excel_path> [sheet_names]
 
+# 只查指定公司
+python -m src.main <excel_path> --company 小满,宁致
+
 # 健康自检（各站点 canary 验证）
 python -m src.main --healthcheck
 
 # 顽固补跑（只查 miss_count>=2 的单号）
 python -m src.main <excel_path> --retry-stubborn
+
+# 数据录入（半结构化文本 → Excel）
+python -m src.data_entry <excel_path>
 ```
 
 ## 平台差异
