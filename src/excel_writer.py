@@ -221,13 +221,13 @@ def find_track_columns(ws) -> dict[int, int]:
 
 
 def _normalize_sheet(ws) -> None:
-    """统一数据行格式：行高自适应 + 内容列自动换行 + 轨迹列等线居中。
+    """统一数据行格式：固定行高100磅 + 内容列自动换行 + 轨迹列等线居中。
 
-    修复业务 Excel 中 81 行起行高固定 22pt 导致多行内容被截断的问题，
-    将所有数据行格式统一为 46~80 行的标准：行高自动、关键列 wrap、
+    将所有数据行格式统一：行高100磅、轨迹列列宽23.34、关键列 wrap、
     轨迹列字体等线 + 水平垂直居中。
     """
     from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
 
     wrap_align = Alignment(wrap_text=True, vertical="top")
     track_align = Alignment(wrap_text=True, vertical="center", horizontal="center")
@@ -235,11 +235,15 @@ def _normalize_sheet(ws) -> None:
 
     content_cols, track_cols = _find_content_columns(ws)
 
+    # 轨迹列统一列宽 23.34
+    for col in track_cols:
+        ws.column_dimensions[get_column_letter(col)].width = 23.34
+
     for row_idx in range(3, ws.max_row + 1):
-        # 行高恢复自动
+        # 行高固定 100 磅
         rd = ws.row_dimensions.get(row_idx)
         if rd:
-            rd.height = None
+            rd.height = 100
 
         # 内容列设置自动换行
         for col in content_cols:
