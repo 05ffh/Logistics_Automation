@@ -4,6 +4,8 @@
 
 当前支持 **宁致 (NZ)**、**云驼 (999)**、**小满 (XM)** 三家，采用适配器模式，可扩展更多公司。
 
+另含 **数据录入模块** (`data_entry.py`)：将业务人员发来的半结构化物流文本一键解析并插入 Excel，自动处理列模板初始化、日期排序、格式对齐。
+
 ## 架构
 
 ```
@@ -60,7 +62,7 @@ python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
 | 公司 | 前缀 | 网站 | 查询方式 | 登录 |
 |------|------|------|----------|------|
 | 宁致 | `NZ` | nzhexp.nextsls.com | **fetch API** — 调内部 JSON 接口 | 需要 |
-| 云驼 | `999` | 17track.net | DOM 批量 (5/批) + 单条回退选"愿景征途" | 不需要 |
+| 云驼 | `999` | 17track.net | DOM 逐单 + 回退选"愿景征途" | 不需要 |
 | 小满 | `XM` | xmsdwl.nextsls.com | **fetch API** — 调内部 JSON 接口 | 不需要 |
 
 **宁致和小满共用同一个 API 端点**：`/tracking/app?inajax=1&tracking_number={tn}`，返回 `{data: {shipment: {traces: [{time, info}, ...]}}}`，traces 时间倒序排列。
@@ -74,7 +76,7 @@ python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
   → 解析合并单元格
   → 各公司查询最新路由:
       宁致/小满: fetch API 直调 JSON 接口 (~0.2s/单号)
-      云驼: DOM 批量填写 textarea 查询 + 单条回退
+      云驼: DOM 逐单查询 + 单条回退
   → 按公司写入"物流轨迹N"列:
       N = 该公司单号在物流单号列首次出现的次序
       缺列时紧跟最后一个物流轨迹列后插入，列宽统一
@@ -103,6 +105,8 @@ python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
 │   └── 物流网站一键启动.bat    # 启动 Edge + CDP
 ├── src/
 │   ├── cdp_client.py           # CDP WebSocket 通信层 + fetch_api()
+│   ├── cdp_util.py             # CDP 工具函数 (val)
+│   ├── data_entry.py           # 半结构化物流文本解析 + 自动填入 Excel
 │   ├── excel_reader.py         # 读取 + 表头自动匹配 + 前缀归属 + 合并单元格
 │   ├── excel_writer.py         # 按公司写物流轨迹N列 + 建列 + 迁移清理 + 备份
 │   ├── validation.py           # 轨迹数据校验 (is_valid_routing)
@@ -110,7 +114,7 @@ python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
 │   ├── companies/              # 多公司适配器
 │   │   ├── base.py             # CompanyAdapter 抽象基类
 │   │   ├── ningzhi.py          # 宁致 (NZ) → nzhexp.nextsls.com (fetch API)
-│   │   ├── yuntuo.py           # 云驼 (999) → 17track.net (DOM 批量)
+│   │   ├── yuntuo.py           # 云驼 (999) → 17track.net (DOM 逐单)
 │   │   └── xiaoman.py          # 小满 (XM) → xmsdwl.nextsls.com (fetch API)
 │   └── main.py                 # 主流程编排
 ├── skill/
@@ -125,6 +129,40 @@ python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
 2. 优先尝试找内部 JSON API 用 `cdp.fetch_api()` 调用（参考宁致/小满），找不到再用 DOM 方式（参考云驼）
 3. 在 `src/excel_reader.py` 的 `CARRIER_PREFIXES` 注册前缀 → 公司名
 4. 加入 `src/main.py` 的 `ADAPTERS` 列表
+
+## 数据录入
+
+业务人员通过 IM 发来的半结构化物流文本，一键解析并插入 Excel，无需手动复制粘贴。
+
+**输入格式**（业务人员发来的原始消息）：
+```
+7.15
+柘流-US
+发货美森正船 第29水
+预计开船: 7.17 预计到港: 8.18
+美森 CLX++
+FBA 编号: FBA18Q888NRNT00028
+单号: NZ26071140597
+交货仓: ONT8
+箱规: 55.9/44/44 重量: 24.29
+附加费: 5
+配送: 8.22
+```
+
+**使用方式**：
+```bash
+# 直接粘贴文本，程序自动识别并写入
+python -m src.data_entry "C:\path\to\发货明细表.xlsx"
+
+# 进入交互模式，逐条粘贴
+```
+
+**自动处理**：
+- 第 1 行日期 → 按日期排序定位插入行
+- 第 2 行 `XX-XX` 格式自动识别为发货店铺（H 列），否则为发货公司（J 列）
+- 后续行按关键字匹配到对应列：单号、箱规、重量、FBA 编号、交货仓、附加费等
+- 列模板自动初始化：首次运行时新增 货物名称/箱规/重量 列，重命名 箱数量→箱内数量 等
+- 所有格式（字体、边框、对齐）与原文件保持一致
 
 ## 缺失追踪
 
