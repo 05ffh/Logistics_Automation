@@ -241,8 +241,12 @@ def insert_images(target_excel: str | Path,
         ws = wb[sn]
         sc_asin, sc_image = sheet_cols[sn]
         col_letter = get_column_letter(sc_image)
-        ws.column_dimensions[col_letter].width = 8.5
-        col_px = ws.column_dimensions[col_letter].width * 7
+        # 从目标文件继承图片列宽（若未设置过则用 8.5）
+        cur_w = ws.column_dimensions[col_letter].width
+        if not cur_w:
+            ws.column_dimensions[col_letter].width = 8.5
+            cur_w = 8.5
+        col_px = cur_w * 7
 
         for r, asin in rows_for_sheet[sn]:
             ws.cell(row=r, column=sc_image).value = (
