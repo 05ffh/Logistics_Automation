@@ -4,7 +4,14 @@
 
 当前支持 **宁致 (NZ)**、**云驼 (999)**、**小满 (XM)** 三家，采用适配器模式，可扩展更多公司。
 
-另含 **数据录入模块** (`data_entry.py`)：将业务人员发来的半结构化物流文本一键解析并插入 Excel，自动处理列模板初始化、日期排序、格式对齐。
+## 四大模块
+
+| 模块 | 入口 | 功能 |
+|------|------|------|
+| 物流轨迹查询 | `python -m src.main` | CDP 查物流 → 写回轨迹列 + 缺失追踪 |
+| 数据录入 | `python -m src.data_entry` | IM 文本解析 → 按日期插入 Excel |
+| ASIN 图片匹配 | `python -m src.image_inserter build/insert` | ASIN→图片库 → 嵌入 B 列 |
+| 格式迁移 | `python -m src.migrate` | 旧规范 Excel → 新规范列位映射 |
 
 ## 架构
 
@@ -38,17 +45,26 @@
 4. 运行脚本：
 
 ```bash
-# 正常查询（全量，自动记账缺失单号）
+# 物流轨迹查询（全量）
 python -m src.main "C:\path\to\发货明细表.xlsx"
 
-# 可选：只处理指定 sheet
+# 可选：只处理指定 sheet / 指定公司
 python -m src.main "C:\path\to\发货明细表.xlsx" 202606
+python -m src.main "C:\path\to\发货明细表.xlsx" --company 小满,宁致
 
-# 健康自检（跑前先验证各站点是否正常）
+# 健康自检 / 顽固补跑
 python -m src.main --healthcheck
-
-# 精准补跑（只查顽固缺失单号）
 python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
+
+# 数据录入
+python -m src.data_entry "C:\path\to\发货明细表.xlsx"
+
+# 图片库构建 + 插入
+python -m src.image_inserter build "C:\path\to\ASIN映射.xlsx"
+python -m src.image_inserter insert "C:\path\to\发货明细表.xlsx"
+
+# 旧格式迁移
+python -m src.migrate "C:\path\to\旧格式.xlsx"
 ```
 
 ### 自然语言调用（OpenClaw Skill）
@@ -103,12 +119,16 @@ python -m src.main "C:\path\to\发货明细表.xlsx" --retry-stubborn
 ```
 ├── bin/
 │   └── 物流网站一键启动.bat    # 启动 Edge + CDP
+├── images/
+│   └── products/               # ASIN 图片库（按 ASIN 命名）
 ├── src/
 │   ├── cdp_client.py           # CDP WebSocket 通信层 + fetch_api()
 │   ├── cdp_util.py             # CDP 工具函数 (val)
 │   ├── data_entry.py           # 半结构化物流文本解析 + 自动填入 Excel
 │   ├── excel_reader.py         # 读取 + 表头自动匹配 + 前缀归属 + 合并单元格
 │   ├── excel_writer.py         # 按公司写物流轨迹N列 + 建列 + 迁移清理 + 备份
+│   ├── image_inserter.py       # ASIN 图片库构建 + 自动嵌入图片
+│   ├── migrate.py              # 旧格式 → 新规范列位迁移
 │   ├── validation.py           # 轨迹数据校验 (is_valid_routing)
 │   ├── miss_tracker.py         # 缺失单号追踪 + 顽固补跑
 │   ├── companies/              # 多公司适配器
@@ -163,6 +183,41 @@ python -m src.data_entry "C:\path\to\发货明细表.xlsx"
 - 后续行按关键字匹配到对应列：单号、箱规、重量、FBA 编号、交货仓、附加费等
 - 列模板自动初始化：首次运行时新增 货物名称/箱规/重量 列，重命名 箱数量→箱内数量 等
 - 所有格式（字体、边框、对齐）与原文件保持一致
+
+## ASIN 图片匹配
+
+从 ASIN 映射 Excel 提取图片库，按目标文件的 ASIN 列自动嵌入产品图片到 B 列。
+
+**映射文件格式**：A=品名, B=asin, C=图片（WPS 单元格内嵌 DISPIMG）
+
+```bash
+# 第一步：从映射表构建图片库
+python -m src.image_inserter build "C:\path\to\ASIN映射.xlsx"
+
+# 第二步：为目标 Excel 插入图片
+python -m src.image_inserter insert "C:\path\to\发货明细表.xlsx"
+```
+
+自动处理：
+- ASIN 列和图片列按表头自动识别（大小写不敏感）
+- 相同 ASIN 多行共享同一图片 ID
+- 图片自适应行高
+- 图片库随 Git 分发，同事 pull 即用
+
+## 格式迁移
+
+将旧规范 Excel 的一键迁移到 2026 发货信息表最终版规范。
+
+```bash
+python -m src.migrate "C:\path\to\旧格式.xlsx" -o "C:\path\to\规范版.xlsx"
+```
+
+自动处理：
+- 列位映射（旧列→新列）、表头重命名
+- 公式引用修正（`=J3*K3` → `=K3*L3`）
+- 日期序列号转换
+- 价格拆分（`9+2` → 价格 9 + 附加费 2）
+- 格式完整保留（或在新建文件时统一 等线/细线边框/自适应列宽行高）
 
 ## 缺失追踪
 

@@ -1,6 +1,6 @@
 ---
 name: logistics-track
-description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查和数据录入
+description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配和格式迁移
 type: skill
 platform: windows
 ---
@@ -57,18 +57,21 @@ Skill 自动:
 ## 脚本
 
 ```bash
-# 正常查询（全量，自动记账缺失单号）
+# 物流轨迹查询
 python -m src.main <excel_path> [sheet_names]
-
-# 只查指定公司
-python -m src.main <excel_path> --company 小满
 python -m src.main <excel_path> --company 小满,宁致
-
-# 健康自检（跑前先验证各站点是否正常）
 python -m src.main --healthcheck
-
-# 精准补跑（只查顽固缺失单号，不全量重跑）
 python -m src.main <excel_path> --retry-stubborn
+
+# 数据录入
+python -m src.data_entry <excel_path>
+
+# ASIN 图片匹配
+python -m src.image_inserter build <ASIN映射Excel>
+python -m src.image_inserter insert <目标Excel>
+
+# 旧格式迁移
+python -m src.migrate <旧格式Excel> -o <输出路径>
 ```
 
 | 参数 | 说明 |

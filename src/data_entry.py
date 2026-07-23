@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from copy import copy
 from datetime import datetime
 from pathlib import Path
 
@@ -75,16 +76,8 @@ def ensure_template(ws) -> None:
         c.border = _hdr_border
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # 1. 成品编码后插入"货物名称"
-    base = _find("成品编码")
-    if base and not _find("货物名称"):
-        ws.insert_cols(base + 1, 1)
-        ws.cell(row=HEADER_ROW, column=base + 1).value = "货物名称"
-        _style_hdr(base + 1)
-        inserts.append({"at": base + 1, "amount": 1})
-
-    # 2. 箱数量后插入箱规(长)/箱规(宽)/箱规(高)/重量
-    base2 = _find("箱数量")
+    # 1. 箱数量/箱内数量后插入箱规(长)/箱规(宽)/箱规(高)/重量
+    base2 = _find("箱数量") or _find("箱内数量")
     if base2 and not _find("箱规(长)"):
         ws.insert_cols(base2 + 1, 4)
         for i, hdr in enumerate(["箱规(长)", "箱规(宽)", "箱规(高)", "重量"]):
@@ -92,12 +85,18 @@ def ensure_template(ws) -> None:
             _style_hdr(base2 + 1 + i)
         inserts.append({"at": base2 + 1, "amount": 4})
 
-    # 3-4. 重命名
+    # 2. 重命名（兼容旧→新规范，新文件自动跳过）
+    _rename(ws, "成品编码", "品名")
     _rename(ws, "箱数量", "箱内数量")
     _rename(ws, "发船时间", "发车、发船时间")
-    _rename(ws, "配送时段", "发车、发船后配送时段")
+    _rename(ws, "配送时段", "时效")
+    _rename(ws, "发车、发船后配送时段", "时效")
+    _rename(ws, "预计发货时间", "仓库发货时间")
+    _rename(ws, "发货渠道", "实际发货渠道")
     for old_h, new_h in [("箱数量", "箱内数量"), ("发船时间", "发车、发船时间"),
-                          ("配送时段", "发车、发船后配送时段")]:
+                          ("配送时段", "时效"), ("发车、发船后配送时段", "时效"),
+                          ("预计发货时间", "仓库发货时间"), ("发货渠道", "实际发货渠道"),
+                          ("成品编码", "品名")]:
         if old_h in _widths:
             _widths[new_h] = _widths.pop(old_h)
 
@@ -109,7 +108,7 @@ def ensure_template(ws) -> None:
             ws.column_dimensions[cl].width = _widths[h]
         elif h and cl in ws.column_dimensions:
             del ws.column_dimensions[cl]
-    for hdr in ["货物名称", "箱规(长)", "箱规(宽)", "箱规(高)", "重量"]:
+    for hdr in ["箱规(长)", "箱规(宽)", "箱规(高)", "重量"]:
         col = _find(hdr)
         if col:
             ws.column_dimensions[get_column_letter(col)].width = 10
@@ -183,7 +182,7 @@ def _fix_section_merges(ws) -> None:
         h = str(ws.cell(row=HEADER_ROW, column=c).value or "").strip()
         if h == "发货公司":
             end_ops = c
-        if h == "预计发货时间" and start_wh is None:
+        if h in ("预计发货时间", "仓库发货时间") and start_wh is None:
             start_wh = c
 
     # 清理旧的 Row 1 合并单元格（直接操作 ranges 集合，避免 unmerge_cells 的 insert_cols 后遗症）
@@ -413,7 +412,9 @@ def _extract_box_spec(text: str) -> dict:
 def _col_map(ws) -> dict[str, int]:
     """返回 {内部key: 列号}，基于当前表头。"""
     header_to_key = {
+        "品名": "product",
         "货物名称": "product",
+        "实际发货渠道": "channel",
         "发货渠道": "channel",
         "箱数": "quantity",
         "箱规(长)": "box_l",
@@ -426,6 +427,7 @@ def _col_map(ws) -> dict[str, int]:
         "发货店铺": "store",
         "发货公司": "company",
         "发车、发船时间": "ship_date",
+        "时效": "delivery",
         "发车、发船后配送时段": "delivery",
         "价格": "price",
         "附加费": "surcharge",
@@ -503,36 +505,26 @@ def insert_entry(excel_path: str | Path, entry: dict) -> dict:
     ws.insert_rows(insert_row, 1)
     _copy_row_format(ws, insert_row - 1, insert_row)
 
-    # ── 填入数据 + 匹配原文件格式 ──
-    # 标准格式：等线 11pt，水平垂直居中，自动换行，细线边框
-    std_font = Font(name="等线", size=11)
-    std_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    std_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
-    )
-    # 发货渠道：等线 11pt，加粗，红色
-    channel_font = Font(name="等线", size=11, bold=True, color="FFC00000")
-    # 货件号：Arial 10.5pt
-    fba_font = Font(name="Arial", size=10.5)
+    # ── 从相邻行继承每列格式（排除填充色） ──
+    ref_row = insert_row - 1 if insert_row > 3 else insert_row + 1
 
-    special_fonts = {
-        cols.get("channel"): channel_font,
-        cols.get("fba_code"): fba_font,
-    }
+    def _inherit_style(dst_cell, col: int) -> None:
+        """从参考行同列继承字体/边框/对齐/数字格式，不继承填充色。"""
+        ref = ws.cell(row=ref_row, column=col)
+        dst_cell.font = copy(ref.font)
+        dst_cell.border = copy(ref.border)
+        dst_cell.alignment = copy(ref.alignment)
+        if ref.number_format and ref.number_format != "General":
+            dst_cell.number_format = ref.number_format
 
-    def _style_cell(cell, font_=None):
-        cell.font = font_ or std_font
-        cell.alignment = std_align
-        cell.border = std_border
+    # 先给整行所有列继承格式（确保空白列也有边框外观）
+    for col in range(1, ws.max_column + 1):
+        _inherit_style(ws.cell(row=insert_row, column=col), col)
 
     # 填 A 列日期
     a_cell = ws.cell(row=insert_row, column=1)
     a_cell.value = date_val
     a_cell.number_format = 'm"月"d"日";@'
-    _style_cell(a_cell)
 
     # 填写其他列
     filled = []
@@ -542,14 +534,7 @@ def insert_entry(excel_path: str | Path, entry: dict) -> dict:
             continue
         cell = ws.cell(row=insert_row, column=col)
         cell.value = val
-        _style_cell(cell, special_fonts.get(col))
         filled.append(f"{key}={val}")
-
-    # 整行所有单元格补齐边框（含空白列）
-    for col in range(1, ws.max_column + 1):
-        cell = ws.cell(row=insert_row, column=col)
-        if cell.border.left.style is None:
-            cell.border = std_border
 
     try:
         wb.save(excel_path)
