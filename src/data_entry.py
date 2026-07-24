@@ -1279,8 +1279,41 @@ def parse_us_batch(text: str) -> list[dict]:
 
 # ── US 源产品提取 ─────────────────────────────────────────────────
 
+def _parse_row2_headers(sheet_data, ss_texts: list[str]) -> dict[str, str]:
+    """解析 Row 2 表头，返回 {header_text: col_letter}。支持 inlineStr 和 shared string。"""
+    result: dict[str, str] = {}
+    for row in sheet_data.findall(f"{{{NS}}}row"):
+        if row.get("r") != "2":
+            continue
+        for c in row.findall(f"{{{NS}}}c"):
+            ref = c.get("r", "")
+            m = re.match(r"([A-Z]+)2", ref)
+            if not m:
+                continue
+            cl = m.group(1)
+            # inlineStr
+            is_el = c.find(f"{{{NS}}}is")
+            if is_el is not None:
+                t_el = is_el.find(f"{{{NS}}}t")
+                if t_el is not None and t_el.text:
+                    result[t_el.text.strip()] = cl
+                continue
+            # shared string
+            if c.get("t") == "s":
+                v_el = c.find(f"{{{NS}}}v")
+                if v_el is not None and v_el.text:
+                    try:
+                        idx = int(v_el.text)
+                        if 0 <= idx < len(ss_texts):
+                            result[ss_texts[idx].strip()] = cl
+                    except ValueError:
+                        pass
+        return result
+    return result
+
+
 def extract_source_products(excel_path: Path, store: str | None = None) -> tuple[list[dict], list[int]]:
-    """从目标 Excel 提取产品信息 + DISPIMG 公式。返回 (products, source_row_numbers)。"""
+    """从目标 Excel 提取产品信息 + DISPIMG 公式。列位按 Row 2 表头动态解析。返回 (products, source_row_numbers)。"""
     with zipfile.ZipFile(excel_path) as zf:
         ss_texts: list[str] = []
         try:
@@ -1305,6 +1338,15 @@ def extract_source_products(excel_path: Path, store: str | None = None) -> tuple
         if sheet_data is None:
             return [], []
 
+        header_to_col = _parse_row2_headers(sheet_data, ss_texts)
+        img_col = header_to_col.get("图片", "B")
+        date_col = header_to_col.get("发表日期", "A")
+        product_col = header_to_col.get("品名", "C")
+        asin_col = header_to_col.get("asin", "D")
+        sku_col = header_to_col.get("sku", "E")
+        fnsku_col = header_to_col.get("fnsku", "F")
+        store_col = header_to_col.get("发货店铺", "G")
+
         products: list[dict] = []
         source_rows: list[int] = []
         for row in sheet_data.findall(f"{{{NS}}}row"):
@@ -1324,7 +1366,7 @@ def extract_source_products(excel_path: Path, store: str | None = None) -> tuple
                 f_el = c.find(f"{{{NS}}}f")
                 is_el = c.find(f"{{{NS}}}is")
 
-                if col == "B":
+                if col == img_col:
                     if f_el is not None and f_el.text:
                         dispimg_f = f_el.text
                     if v_el is not None and v_el.text:
@@ -1336,17 +1378,17 @@ def extract_source_products(excel_path: Path, store: str | None = None) -> tuple
                     if t_el is not None:
                         cells[col] = t_el.text or ""
 
-            if not cells.get("C") or not cells.get("D"):
+            if not cells.get(product_col) or not cells.get(asin_col):
                 continue
-            if store and cells.get("G", "") != store:
+            if store and store_col and cells.get(store_col, "") != store:
                 continue
 
             products.append({
-                "product": cells.get("C", ""),
-                "asin": cells.get("D", ""),
-                "sku": cells.get("E", ""),
-                "fnsku": cells.get("F", ""),
-                "date": cells.get("A", ""),
+                "product": cells.get(product_col, ""),
+                "asin": cells.get(asin_col, ""),
+                "sku": cells.get(sku_col, ""),
+                "fnsku": cells.get(fnsku_col, ""),
+                "date": cells.get(date_col, ""),
                 "dispimg_f": dispimg_f or "",
                 "dispimg_v": dispimg_v or "",
             })
