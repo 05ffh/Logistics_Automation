@@ -41,7 +41,7 @@ def identify_company(tn: str) -> str:
 
 
 def company_position(all_tracking_nos: list[str], company_name: str) -> int:
-    """公司在 S 列单号中首次出现的次序（1-based），决定写入第几个物流轨迹列。"""
+    """公司在物流单号列中首次出现的次序（1-based），决定写入第几个物流轨迹列。"""
     order: list[str] = []
     for tn in all_tracking_nos:
         c = identify_company(tn)
@@ -75,11 +75,11 @@ def find_company_rows(
         # 按表头自动匹配列位，找不到回退到旧硬编码值（兼容历史格式）
         col_tracking_nos = find_header_column(ws, "物流单号")
         if col_tracking_nos is None:
-            col_tracking_nos = 18  # S列，历史默认
+            col_tracking_nos = 27  # AB列，新规范默认
         col_track_info = find_header_column(ws, "物流轨迹1")
         if col_track_info is None:
-            col_track_info = 24  # Y列，历史默认
-        merged = _merged_value_map(ws)  # 合并单元格锚点值下传（如 K 列发货公司）
+            col_track_info = 33  # AH列，新规范默认
+        merged = _merged_value_map(ws)  # 合并单元格锚点值下传（如发货公司列常合并）
         for row_idx in range(3, ws.max_row + 1):
             tracking_str = _cell_str(ws, row_idx, col_tracking_nos, merged)
             if not tracking_str:
@@ -123,7 +123,7 @@ _TN_LINE = re.compile(r"^[A-Za-z0-9]{5,30}$")
 
 
 def _extract_all(text: str) -> list[str]:
-    """按 S 列原始顺序提取所有单号（全公司），保序去重。"""
+    """按物流单号列原始顺序提取所有单号（全公司），保序去重。"""
     result = []
     seen = set()
     for p in re.split(r"[\n\r]+", text):

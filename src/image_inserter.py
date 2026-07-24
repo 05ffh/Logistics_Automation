@@ -153,6 +153,32 @@ def _read_mapping_sheet(source_excel: Path) -> dict[str, str]:
 
 # ── insert_images ─────────────────────────────────────────────────
 
+def _fix_wps_shared_strings(f: Path) -> None:
+    """WPS 文件在 Content_Types/rels 中声明了 sharedStrings.xml 但未写入 ZIP，
+    openpyxl 会因找不到该文件而崩溃。仅在文件确实缺失时移除引用。"""
+    import re as _re
+    with zipfile.ZipFile(f) as zf:
+        if "xl/sharedStrings.xml" in zf.namelist():
+            return
+
+    tmp = f.with_suffix(".wpsfix.zip")
+    with zipfile.ZipFile(f) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                text = data.decode("utf-8")
+                text = _re.sub(
+                    r'<Override PartName="/xl/sharedStrings\.xml"[^>]*/>', "", text
+                )
+                data = text.encode("utf-8")
+            elif item.filename == "xl/_rels/workbook.xml.rels":
+                text = data.decode("utf-8")
+                text = _re.sub(r'<Relationship[^>]*sharedStrings[^>]*/>', "", text)
+                data = text.encode("utf-8")
+            zout.writestr(item, data)
+    tmp.replace(f)
+
+
 def insert_images(target_excel: str | Path,
                   library_dir: str | Path = _DEFAULT_LIBRARY,
                   asin_col: int | None = None,
@@ -172,6 +198,9 @@ def insert_images(target_excel: str | Path,
     )
     shutil.copy2(target_excel, backup_path)
 
+    # 修复 WPS 文件：声明了 sharedStrings.xml 但未写入，openpyxl 会崩溃
+    _fix_wps_shared_strings(target_excel)
+
     # 构建图片库索引 {ASIN: filename}
     lib: dict[str, str] = {}
     for f in library_dir.iterdir():
@@ -186,7 +215,8 @@ def insert_images(target_excel: str | Path,
     sheet_cols: dict[str, tuple[int, int]] = {}  # {sheet: (asin_col, image_col)}
 
     sheets = sheet_names if sheet_names else [
-        sn for sn in wb.sheetnames if sn.isdigit()
+        sn for sn in wb.sheetnames
+        if sn.isdigit() or not any(s.isdigit() for s in wb.sheetnames)
     ]
 
     for sn in sheets:
@@ -259,110 +289,170 @@ def insert_images(target_excel: str | Path,
     wb.save(target_excel)
     wb.close()
 
-    # ── Step 2: ZIP 级写入 (在 openpyxl 保存之后，不会被覆盖) ──
-    _zip_write_images(target_excel, img_entries, rows_by_asin)
+    # ── Step 2: ZIP 级写入 (openpyxl 保存后 cellImages 已丢失，从备份读取已有数据合并) ──
+    _zip_write_images(target_excel, img_entries, rows_by_asin, backup_path)
 
     return {"updated": updated, "missing": missing, "skipped": skipped,
             "backup": str(backup_path)}
 
 
+def _parse_existing_rels(zin: zipfile.ZipFile) -> tuple[list[str], int]:
+    """解析已有 cellimages.xml.rels，返回 (Relationship 元素列表, 最大 rId 编号)。"""
+    rels: list[str] = []
+    max_rid = 0
+    if "xl/_rels/cellimages.xml.rels" in zin.namelist():
+        text = zin.read("xl/_rels/cellimages.xml.rels").decode("utf-8")
+        for m in re.finditer(r'<Relationship\s[^>]+/>', text):
+            rels.append(m.group(0))
+            rid_m = re.search(r'Id="rId(\d+)"', m.group(0))
+            if rid_m:
+                max_rid = max(max_rid, int(rid_m.group(1)))
+    return rels, max_rid
+
+
+def _parse_existing_cellimages(zin: zipfile.ZipFile) -> list[str]:
+    """解析已有 cellimages.xml，返回 <etc:cellImage>...</etc:cellImage> 块列表。"""
+    blocks: list[str] = []
+    if "xl/cellimages.xml" not in zin.namelist():
+        return blocks
+    text = zin.read("xl/cellimages.xml").decode("utf-8")
+    for m in re.finditer(r"<etc:cellImage>.*?</etc:cellImage>", text, re.DOTALL):
+        blocks.append(m.group(0))
+    return blocks
+
+
 def _zip_write_images(target_excel: Path, img_entries: list[dict],
-                      rows_by_asin: dict[str, list[tuple[str, int]]]) -> None:
-    """ZIP 级写入: media 文件 + cellimages.xml + rels + Content_Types + workbook rels。"""
+                      rows_by_asin: dict[str, list[tuple[str, int]]],
+                      backup_path: Path) -> None:
+    """ZIP 级写入: 合并已有 cellimages + 新增，保留其他 sheet 的图片数据。
+
+    已有 cellImages 从 backup 读取（openpyxl save 已丢弃目标文件中的 cellImages）。
+    """
     target_excel = Path(target_excel)
+    backup_path = Path(backup_path)
     tmp_path = target_excel.with_suffix(".tmp")
 
-    with zipfile.ZipFile(target_excel) as zin, zipfile.ZipFile(
-        tmp_path, "w", zipfile.ZIP_DEFLATED
-    ) as zout:
+    with zipfile.ZipFile(target_excel) as zin, \
+         zipfile.ZipFile(backup_path) as zback, \
+         zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
         existing = set(zin.namelist())
 
-        # 确定新图片在 media/ 中的序号
-        media_nums = []
-        for name in existing:
+        # ── 从备份读取已有 cellimages 数据（目标文件已被 openpyxl 清空）──
+        old_rels_lines, max_rid = _parse_existing_rels(zback)
+        old_cellimage_blocks = _parse_existing_cellimages(zback)
+
+        # 从备份复制已有 media 文件，并计算 hash 用于去重
+        existing_hashes: dict[str, int] = {}
+        existing_media_nums: set[int] = set()
+        for name in zback.namelist():
             m = re.match(r"xl/media/image(\d+)\.\w+", name)
             if m:
-                media_nums.append(int(m.group(1)))
-        next_num = max(media_nums, default=0)
+                num = int(m.group(1))
+                existing_media_nums.add(num)
+                data = zback.read(name)
+                existing_hashes[_sha256_hex(data)] = num
+        next_num = max(existing_media_nums, default=0)
 
-        # 逐个图片：去重检测（hash → 已分配序号）
+        # ── 写入新图片（跳过 hash 重复的）──
         seen_hashes: dict[str, int] = {}
         for entry in img_entries:
             img_data = entry["img_path"].read_bytes()
             h = _sha256_hex(img_data)
-            if h in seen_hashes:
-                # 复用已有图片
+            if h in existing_hashes:
+                entry["media_num"] = existing_hashes[h]
+            elif h in seen_hashes:
                 entry["media_num"] = seen_hashes[h]
             else:
                 next_num += 1
                 entry["media_num"] = next_num
                 seen_hashes[h] = next_num
+                existing_hashes[h] = next_num
                 ext = entry["img_path"].suffix
                 zout.writestr(f"xl/media/image{next_num}{ext}", img_data)
 
-        # 生成 cellimages.xml
-        cellimages_xml = _build_cellimages_xml(img_entries, rows_by_asin)
-        zout.writestr("xl/cellimages.xml", cellimages_xml)
+        # ── 分配新 rId ──
+        for i, entry in enumerate(img_entries):
+            entry["rId"] = f"rId{max_rid + i + 1}"
 
-        # 生成 cellimages.xml.rels
-        rels_xml = _build_cellimages_rels(img_entries)
-        zout.writestr("xl/_rels/cellimages.xml.rels", rels_xml)
+        # ── 生成合并后的 cellimages.xml ──
+        new_xml_blocks = _build_cellimages_xml_blocks(img_entries, rows_by_asin)
+        all_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<etc:cellImages'
+            ' xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
+            ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+            ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+            ' xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData">\n'
+            + "\n".join(old_cellimage_blocks + new_xml_blocks)
+            + "\n</etc:cellImages>"
+        )
+        zout.writestr("xl/cellimages.xml", all_xml.encode("utf-8"))
 
-        # 复制其余文件，修改需要更新的 XML
-        to_update = {
-            "[Content_Types].xml",
-            "xl/_rels/workbook.xml.rels",
-        }
+        # ── 生成合并后的 cellimages.xml.rels ──
+        new_rels_lines = _build_cellimages_rels_lines(img_entries)
+        rels_ns = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
+        all_rels = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            f'<Relationships {rels_ns}>\n'
+            + "\n".join(old_rels_lines + new_rels_lines)
+            + "\n</Relationships>"
+        )
+        zout.writestr("xl/_rels/cellimages.xml.rels", all_rels.encode("utf-8"))
 
+        # ── 复制所有文件：目标（openpyxl 输出）+ 备份（cellImages / media）──
+        new_media_nums = {e["media_num"] for e in img_entries if e["media_num"] not in existing_media_nums}
+        written: set[str] = set()
+
+        # 先处理目标文件（不含 cellImages 相关内容）
         for name in sorted(existing):
-            if name == "xl/cellimages.xml":
-                continue  # 已写入
-            if name == "xl/_rels/cellimages.xml.rels":
-                continue  # 已写入
-            if name.startswith("xl/media/") and any(
-                f"image{entry['media_num']}" in name for entry in img_entries
-            ):
-                continue  # 已写入（重复 hash 的情况也会覆盖）
-
+            if name == "xl/cellimages.xml" or name == "xl/_rels/cellimages.xml.rels":
+                continue
+            if name.startswith("xl/media/"):
+                continue  # 目标文件无 media，跳过
             data = zin.read(name)
-
             if name == "[Content_Types].xml":
                 data = _update_content_types(data)
             elif name == "xl/_rels/workbook.xml.rels":
                 data = _update_workbook_rels(data)
-
             zout.writestr(name, data)
+            written.add(name)
 
-        # 确保新增的目录存在
-        for dn in ("xl/media/", "xl/_rels/"):
-            if dn not in existing and dn not in [n for n in zout.namelist()]:
-                # 目录在 ZIP 中不需要显式创建（writestr 自动处理）
-                pass
+        # 再从备份复制 cellImages 相关文件（media + Content_Types + workbook.rels 需要合并）
+        for name in sorted(zback.namelist()):
+            if name in written:
+                continue
+            if name == "xl/cellimages.xml" or name == "xl/_rels/cellimages.xml.rels":
+                continue  # 已生成合并版本
+            if name.startswith("xl/media/"):
+                m = re.match(r"xl/media/image(\d+)\.\w+", name)
+                if m and int(m.group(1)) in new_media_nums:
+                    continue  # 新图片已在上面写入
+                zout.writestr(name, zback.read(name))
+            elif name == "[Content_Types].xml":
+                data = _update_content_types(zback.read(name))
+                zout.writestr(name, data)
+            elif name == "xl/_rels/workbook.xml.rels":
+                data = _update_workbook_rels(zback.read(name))
+                zout.writestr(name, data)
+            else:
+                # 其他备份独有的文件（如 Sheet3 相关）
+                zout.writestr(name, zback.read(name))
 
     tmp_path.replace(target_excel)
 
 
-def _build_cellimages_xml(entries: list[dict],
-                          rows_by_asin: dict[str, list[tuple[str, int]]]) -> bytes:
-    """生成完整的 cellimages.xml。"""
-    parts = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-        '<etc:cellImages'
-        ' xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
-        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
-        ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
-        ' xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData">',
-    ]
-
-    c_nv_pr_id = 2
+def _build_cellimages_xml_blocks(entries: list[dict],
+                                  rows_by_asin: dict[str, list[tuple[str, int]]]) -> list[str]:
+    """生成新的 <etc:cellImage> 块列表。"""
+    blocks = []
+    c_nv_pr_id = 2 + len(entries)  # 避免 ID 冲突（简单递增）
     for entry in entries:
         c_nv_pr_id += 1
-        # 用第一个匹配行的行号确定 y 偏移
         locs = rows_by_asin.get(entry["asin"], [])
         first_row = min(r for _, r in locs) if locs else 3
         y_off = (first_row - 2) * _ROW_HEIGHT_EMU
 
-        cell_image = (
+        block = (
             '<etc:cellImage>'
             '<xdr:pic>'
             '<xdr:nvPicPr>'
@@ -385,18 +475,13 @@ def _build_cellimages_xml(entries: list[dict],
             '</xdr:pic>'
             '</etc:cellImage>'
         )
-        parts.append(cell_image)
-
-    parts.append("</etc:cellImages>")
-    return "\n".join(parts).encode("utf-8")
+        blocks.append(block)
+    return blocks
 
 
-def _build_cellimages_rels(entries: list[dict]) -> bytes:
-    """生成 cellimages.xml.rels。"""
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
-    ]
+def _build_cellimages_rels_lines(entries: list[dict]) -> list[str]:
+    """生成新的 Relationship 行列表（不含 XML 头和闭合标签）。"""
+    lines = []
     for entry in entries:
         ext = entry["img_path"].suffix
         lines.append(
@@ -404,8 +489,7 @@ def _build_cellimages_rels(entries: list[dict]) -> bytes:
             f' Type="{_IMAGE_REL_TYPE}"'
             f' Target="media/image{entry["media_num"]}{ext}"/>'
         )
-    lines.append("</Relationships>")
-    return "\n".join(lines).encode("utf-8")
+    return lines
 
 
 def _update_content_types(data: bytes) -> bytes:

@@ -238,7 +238,7 @@ def main():
             continue
         existing = row.get("existing_info") or ""
         old_map = _parse_existing_map(existing)
-        # 仅本公司的单号（S 列顺序），每家公司独占一列
+        # 仅本公司的单号（物流单号列顺序），每家公司独占一列
         my_tns = row.get("tracking_nos") or []
 
         blocks = []
@@ -467,7 +467,7 @@ _TN_PATTERN = re.compile(r"^[A-Z0-9]{5,25}$")
 
 
 def _extract_all_tns_from_s_column(y_text: str) -> list[str]:
-    """从 Y 列文本中逐行提取所有物流单号（保持顺序）。"""
+    """从物流轨迹列文本中逐行提取所有物流单号（保持顺序）。"""
     tns = []
     if not y_text:
         return tns
@@ -479,7 +479,7 @@ def _extract_all_tns_from_s_column(y_text: str) -> list[str]:
 
 
 def _extract_routing_for_tn(y_text: str, tn: str) -> str:
-    """从 Y 列提取指定单号的路由文本（不含单号行本身）。"""
+    """从物流轨迹列提取指定单号的路由文本（不含单号行本身）。"""
     if not y_text or not tn:
         return ""
     all_tns = _extract_all_tns_from_s_column(y_text)
@@ -502,7 +502,7 @@ def _extract_routing_for_tn(y_text: str, tn: str) -> str:
 
 
 def _parse_existing_map(y_text: str) -> dict[str, str]:
-    """把旧 Y 列解析为 {单号: 轨迹文本}，用于保留其他公司/未刷新的轨迹。"""
+    """把物流轨迹列文本解析为 {单号: 轨迹文本}，用于保留其他公司/未刷新的轨迹。"""
     result: dict[str, str] = {}
     for tn in _extract_all_tns_from_s_column(y_text):
         routing = _extract_routing_for_tn(y_text, tn)
