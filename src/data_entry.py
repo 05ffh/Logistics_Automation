@@ -1346,6 +1346,7 @@ def extract_source_products(excel_path: Path, store: str | None = None) -> tuple
                 "asin": cells.get("D", ""),
                 "sku": cells.get("E", ""),
                 "fnsku": cells.get("F", ""),
+                "date": cells.get("A", ""),
                 "dispimg_f": dispimg_f or "",
                 "dispimg_v": dispimg_v or "",
             })
@@ -1356,94 +1357,184 @@ def extract_source_products(excel_path: Path, store: str | None = None) -> tuple
 
 # ── US 写入 (ZIP XML) ──────────────────────────────────────────────
 
-def _us_all_columns() -> list[str]:
-    """返回 37 列字母 A-AK。"""
-    cols = []
-    for i in range(1, 38):
-        n = i - 1
-        if n < 26:
-            cols.append(chr(ord("A") + n))
-        else:
-            cols.append("A" + chr(ord("A") + n - 26))
-    return cols
+# header → internal field for US column resolution
+_US_FIELD_HEADERS = {
+    "date": "发表日期",
+    "image": "图片",
+    "product": "品名",
+    "asin": "asin",
+    "sku": "sku",
+    "fnsku": "fnsku",
+    "store": "发货店铺",
+    "channel_specified": "指定发货渠道",
+    "box_l": "箱规(长)",
+    "box_w": "箱规(宽)",
+    "box_h": "箱规(高)",
+    "weight": "重量",
+    "channel": "实际发货渠道",
+    "company": "发货公司",
+    "ship_date": "发车、发船时间",
+    "delivery": "时效",
+    "price": "价格",
+    "warehouse": "仓库",
+    "fba_code": "货件号",
+}
 
 
-def _us_build_cells(shipment: dict, product: dict) -> list[tuple]:
-    """构建一行的 (col, value, style, cell_type) 列表。cell_type: inlineStr | formula_str。"""
+def _us_parse_headers(sroot: ET.Element,
+                      ss_dict: dict[int, str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """从 sheet XML 的 Row 2 解析表头，返回 ({field: col_letter}, all_col_letters)。"""
+    sheet_data = sroot.find(f"{{{NS}}}sheetData")
+    if sheet_data is None:
+        return {}, []
+
+    row2 = None
+    for row in sheet_data.findall(f"{{{NS}}}row"):
+        if row.get("r") == "2":
+            row2 = row
+            break
+    if row2 is None:
+        return {}, []
+
+    col_to_header: dict[str, str] = {}
+    all_cols: list[str] = []
+    for cell in row2.findall(f"{{{NS}}}c"):
+        ref = cell.get("r", "")
+        m = re.match(r"([A-Z]+)2", ref)
+        if not m:
+            continue
+        cl = m.group(1)
+        all_cols.append(cl)
+        # inlineStr
+        is_el = cell.find(f"{{{NS}}}is")
+        if is_el is not None:
+            t_el = is_el.find(f"{{{NS}}}t")
+            if t_el is not None and t_el.text:
+                col_to_header[cl] = t_el.text.strip()
+                continue
+        # shared string (t="s")
+        if cell.get("t") == "s" and ss_dict:
+            v_el = cell.find(f"{{{NS}}}v")
+            if v_el is not None and v_el.text:
+                idx = int(v_el.text)
+                text = ss_dict.get(idx, "")
+                if text:
+                    col_to_header[cl] = text.strip()
+
+    header_to_col = {h: cl for cl, h in col_to_header.items()}
+    field_to_col: dict[str, str] = {}
+    for field, header in _US_FIELD_HEADERS.items():
+        cl = header_to_col.get(header, "")
+        if cl:
+            field_to_col[field] = cl
+
+    return field_to_col, sorted(all_cols, key=_col_sort_key)
+
+
+def _col_sort_key(cl: str) -> int:
+    """'A'→0, 'Z'→25, 'AA'→26, ..."""
+    n = 0
+    for ch in cl:
+        n = n * 26 + (ord(ch) - ord("A") + 1)
+    return n - 1
+
+
+def _us_build_cells(shipment: dict, product: dict,
+                    col_map: dict[str, str]) -> list[tuple]:
+    """构建一行的 (col, value, style, cell_type) 列表。列字母由表头动态解析。"""
     cells: list[tuple] = []
     ship = shipment.get("ship_date_text", "")
-    date_val = _fmt_ship_date(ship) if ship else ""
 
-    if date_val:
-        cells.append(("A", date_val, STYLE_BORDER, "inlineStr"))
+    c = col_map.get("date", "")
+    date_val = product.get("date", "")
+    if date_val and c:
+        cells.append((c, date_val, STYLE_BORDER, "inlineStr"))
 
     dispimg_f = product.get("dispimg_f", "")
-    if dispimg_f:
-        cells.append(("B", dispimg_f, STYLE_BORDER, "formula_str"))
+    c = col_map.get("image", "")
+    if dispimg_f and c:
+        cells.append((c, dispimg_f, STYLE_BORDER, "formula_str"))
 
-    if product.get("product"):
-        cells.append(("C", product["product"], STYLE_YELLOW, "inlineStr"))
-    if product.get("asin"):
-        cells.append(("D", product["asin"], STYLE_BORDER, "inlineStr"))
-    if product.get("sku"):
-        cells.append(("E", product["sku"], STYLE_BORDER, "inlineStr"))
-    if product.get("fnsku"):
-        cells.append(("F", product["fnsku"], STYLE_BORDER, "inlineStr"))
+    c = col_map.get("product", "")
+    if product.get("product") and c:
+        cells.append((c, product["product"], STYLE_YELLOW, "inlineStr"))
+    c = col_map.get("asin", "")
+    if product.get("asin") and c:
+        cells.append((c, product["asin"], STYLE_BORDER, "inlineStr"))
+    c = col_map.get("sku", "")
+    if product.get("sku") and c:
+        cells.append((c, product["sku"], STYLE_BORDER, "inlineStr"))
+    c = col_map.get("fnsku", "")
+    if product.get("fnsku") and c:
+        cells.append((c, product["fnsku"], STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("store", "")
     store = shipment.get("store", "")
-    if store:
-        cells.append(("G", store, STYLE_BORDER, "inlineStr"))
+    if store and c:
+        cells.append((c, store, STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("channel_specified", "")
     ch_spec = shipment.get("channel_specified", "")
-    if ch_spec:
-        cells.append(("I", ch_spec, STYLE_BORDER, "inlineStr"))
+    if ch_spec and c:
+        cells.append((c, ch_spec, STYLE_BORDER, "inlineStr"))
 
     box_spec = shipment.get("box_spec", "")
     if box_spec:
         spec = _extract_box_spec(box_spec)
-        if spec["box_l"]:
-            cells.append(("M", spec["box_l"], STYLE_BORDER, "inlineStr"))
-        if spec["box_w"]:
-            cells.append(("N", spec["box_w"], STYLE_BORDER, "inlineStr"))
-        if spec["box_h"]:
-            cells.append(("O", spec["box_h"], STYLE_BORDER, "inlineStr"))
+        cl = col_map.get("box_l", "")
+        if spec["box_l"] and cl:
+            cells.append((cl, spec["box_l"], STYLE_BORDER, "inlineStr"))
+        cl = col_map.get("box_w", "")
+        if spec["box_w"] and cl:
+            cells.append((cl, spec["box_w"], STYLE_BORDER, "inlineStr"))
+        cl = col_map.get("box_h", "")
+        if spec["box_h"] and cl:
+            cells.append((cl, spec["box_h"], STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("weight", "")
     weight = shipment.get("weight", "")
-    if weight:
-        cells.append(("P", weight, STYLE_BORDER, "inlineStr"))
+    if weight and c:
+        cells.append((c, weight, STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("channel", "")
     channel = shipment.get("channel", "")
-    if channel:
-        cells.append(("Q", channel, STYLE_BORDER, "inlineStr"))
+    if channel and c:
+        cells.append((c, channel, STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("company", "")
     company = shipment.get("company", "")
-    if company:
-        cells.append(("R", company, STYLE_BORDER, "inlineStr"))
+    if company and c:
+        cells.append((c, company, STYLE_BORDER, "inlineStr"))
 
-    if ship:
-        cells.append(("T", _fmt_ship_date(ship), STYLE_BORDER, "inlineStr"))
+    c = col_map.get("ship_date", "")
+    if ship and c:
+        cells.append((c, _fmt_ship_date(ship), STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("delivery", "")
     delivery = shipment.get("delivery_text", "")
-    if delivery:
-        cells.append(("U", _fmt_delivery(delivery), STYLE_BORDER, "inlineStr"))
+    if delivery and c:
+        cells.append((c, _fmt_delivery(delivery), STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("price", "")
     price = shipment.get("price", "")
-    if price:
-        cells.append(("V", price, STYLE_BORDER, "inlineStr"))
+    if price and c:
+        cells.append((c, price, STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("warehouse", "")
     warehouse = shipment.get("warehouse", "")
-    if warehouse:
-        cells.append(("Z", warehouse, STYLE_BORDER, "inlineStr"))
+    if warehouse and c:
+        cells.append((c, warehouse, STYLE_BORDER, "inlineStr"))
 
+    c = col_map.get("fba_code", "")
     fba = shipment.get("fba_code", "")
-    if fba:
-        cells.append(("AA", fba, STYLE_BORDER, "inlineStr"))
+    if fba and c:
+        cells.append((c, fba, STYLE_BORDER, "inlineStr"))
 
     return cells
 
 
 def _us_build_row(rn: int, cells: list[tuple], all_cols: list[str]) -> ET.Element:
-    """创建 <row> 元素，数据格 + 空边框格填满 A-AK。"""
+    """创建 <row> 元素，数据格 + 空边框格填满所有表头列。"""
     row = ET.Element(f"{{{NS}}}row")
     row.set("r", str(rn))
     row.set("ht", "100")
@@ -1502,16 +1593,26 @@ def insert_us(excel_path: str | Path, shipments: list[dict],
     num_to_delete = len(source_rows)
     insert_at = min(source_rows)
     net_shift = num_new - num_to_delete
-    all_cols = _us_all_columns()
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         sheet_raw = zf.read("xl/worksheets/sheet1.xml")
+        # Resolve shared strings for header parsing
+        ss_dict: dict[int, str] = {}
+        if "xl/sharedStrings.xml" in zf.namelist():
+            ss_xml = zf.read("xl/sharedStrings.xml").decode("utf-8")
+            ss_dict = {i: t for i, t in enumerate(
+                re.findall(r"<si>.*?<t[^>]*>(.*?)</t>.*?</si>", ss_xml, re.DOTALL)
+            )}
 
     ET.register_namespace("", NS)
     sroot = ET.fromstring(sheet_raw)
     sheet_data = sroot.find(f"{{{NS}}}sheetData")
     if sheet_data is None:
         raise ValueError("No sheetData found in sheet XML")
+
+    col_map, all_cols = _us_parse_headers(sroot, ss_dict)
+    if not col_map:
+        raise ValueError("Could not parse header row (Row 2) — missing or empty headers")
 
     # ── 删除原产品行 ──
     to_remove = []
@@ -1538,7 +1639,7 @@ def insert_us(excel_path: str | Path, shipments: list[dict],
     rn = insert_at
     for shipment in shipments:
         for product in products:
-            row_el = _us_build_row(rn, _us_build_cells(shipment, product), all_cols)
+            row_el = _us_build_row(rn, _us_build_cells(shipment, product, col_map), all_cols)
             sheet_data.append(row_el)
             rn += 1
 

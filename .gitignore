@@ -15,4 +15,5 @@ venv/
 .vscode/
 
 .codegraph/
+.claude/
 *_misses.json
