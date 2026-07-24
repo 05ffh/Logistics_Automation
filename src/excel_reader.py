@@ -72,13 +72,13 @@ def find_company_rows(
         if not sheet_name.strip().isdigit():
             continue
         ws = wb[sheet_name]
-        # 按表头自动匹配列位，找不到回退到旧硬编码值（兼容历史格式）
+        # 按表头自动匹配列位，找不到回退到新规范默认值
         col_tracking_nos = find_header_column(ws, "物流单号")
         if col_tracking_nos is None:
-            col_tracking_nos = 27  # AB列，新规范默认
+            col_tracking_nos = 27  # AB列
         col_track_info = find_header_column(ws, "物流轨迹1")
         if col_track_info is None:
-            col_track_info = 33  # AH列，新规范默认
+            col_track_info = 33  # AH列
         merged = _merged_value_map(ws)  # 合并单元格锚点值下传（如发货公司列常合并）
         for row_idx in range(3, ws.max_row + 1):
             tracking_str = _cell_str(ws, row_idx, col_tracking_nos, merged)
@@ -86,7 +86,7 @@ def find_company_rows(
                 continue
             existing = _cell_str(ws, row_idx, col_track_info, merged)
 
-            # 按单号前缀归属公司（J/K 公司名填写不规范，前缀才是权威标识）
+            # 按单号前缀归属公司（发货公司列填写不规范，前缀才是权威标识）
             for comp in companies:
                 name = comp["name"]
                 prefix = comp["prefix"]

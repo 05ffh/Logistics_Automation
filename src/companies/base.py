@@ -19,7 +19,7 @@ class CompanyAdapter(ABC):
     """
 
     # 子类必须定义
-    name: str           # 公司名称（与 Excel K/J 列匹配）
+    name: str           # 公司名称
     prefix: str         # 物流单号前缀
     batch_size: int = 1
     canary_number: str | None = None  # 健康自检用的已知单号
