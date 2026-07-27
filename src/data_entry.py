@@ -30,9 +30,9 @@ HEADER_ROW = 2
 # OOXML namespace
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
-# US 用 cellXfs 样式索引
-STYLE_BORDER = "4"   # borderId=1, fillId=0 (边框,无填充)
-STYLE_YELLOW = "6"   # borderId=1, fillId=3 (边框,黄底)
+# US cellXfs style indices — set dynamically in insert_us() per-file
+STYLE_BORDER = "4"
+STYLE_YELLOW = "6"
 
 
 # ── 列模板 ──────────────────────────────────────────────────────
@@ -301,6 +301,8 @@ _LABEL_MAP = {
     "单价价格": "price",
     "价格": "price",
     "有无附加（多少）": "surcharge",
+    "附加": "surcharge",
+    "附加费": "surcharge",
     "仓库": "warehouse",
     "重量": "weight",
     "发货公司": "company",
@@ -984,6 +986,91 @@ def _xml_escape(text: str) -> str:
                .replace('"', "&quot;").replace("'", "&apos;")
 
 
+def _find_or_create_center_xf(styles_xml: str, needs_border: bool = False,
+                               needs_yellow_fill: bool = False) -> tuple[str, int]:
+    """在 styles.xml 的 cellXfs 中查找或创建居中 xf，返回 (modified_xml, xf_index)。"""
+    NS_S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+    def _t(n):
+        return f"{{{NS_S}}}{n}"
+
+    root = ET.fromstring(styles_xml)
+
+    # find thin border id
+    borders = root.find(_t("borders"))
+    thin_bid = "0"
+    if borders is not None:
+        for i, b in enumerate(borders.findall(_t("border"))):
+            for side in ["left", "right", "top", "bottom"]:
+                s = b.find(_t(side))
+                if s is not None and s.get("style") == "thin":
+                    thin_bid = str(i)
+                    break
+            if thin_bid != "0":
+                break
+
+    # find yellow fill id
+    fills = root.find(_t("fills"))
+    yellow_fid = None
+    if fills is not None:
+        for i, f in enumerate(fills.findall(_t("fill"))):
+            pf = f.find(_t("patternFill"))
+            if pf is None:
+                continue
+            fg = pf.find(_t("fgColor"))
+            if fg is not None and fg.get("rgb", "").upper() in ("FFFFFF00", "FFFF00"):
+                yellow_fid = str(i)
+                break
+
+    cellxfs = root.find(_t("cellXfs"))
+    if cellxfs is None:
+        return styles_xml, 0
+
+    # search for existing match
+    for i, xf in enumerate(cellxfs.findall(_t("xf"))):
+        align = xf.find(_t("alignment"))
+        if align is None:
+            continue
+        if align.get("horizontal") != "center" or align.get("vertical") != "center":
+            continue
+        bid = xf.get("borderId", "0")
+        fid = xf.get("fillId", "0")
+        if needs_border and needs_yellow_fill:
+            if bid == thin_bid and yellow_fid and fid == yellow_fid:
+                return styles_xml, i
+        elif needs_border:
+            if bid == thin_bid and fid == "0":
+                return styles_xml, i
+        else:
+            if bid == "0" and fid == "0":
+                return styles_xml, i
+
+    # not found — create one based on xf[0]
+    base = cellxfs.find(_t("xf"))
+    new_xf = ET.SubElement(cellxfs, _t("xf"))
+    for attr in ["numFmtId", "fontId", "xfId"]:
+        new_xf.set(attr, base.get(attr, "0") if base is not None else "0")
+    new_xf.set("fillId", "0")
+    new_xf.set("borderId", "0")
+
+    if needs_border:
+        new_xf.set("borderId", thin_bid)
+        new_xf.set("applyBorder", "1")
+    if needs_yellow_fill and yellow_fid:
+        new_xf.set("fillId", yellow_fid)
+        new_xf.set("applyFill", "1")
+
+    new_xf.set("applyAlignment", "1")
+    align = ET.SubElement(new_xf, _t("alignment"))
+    align.set("horizontal", "center")
+    align.set("vertical", "center")
+
+    new_idx = len(cellxfs.findall(_t("xf"))) - 1
+    cellxfs.set("count", str(new_idx + 1))
+
+    return ET.tostring(root, encoding="unicode"), new_idx
+
+
 def insert_de(excel_path: str | Path, entry: dict) -> dict:
     """DE 回填：ZIP 级 XML 编辑，只改写单元格值，不动任何其他内容。
 
@@ -1019,6 +1106,11 @@ def insert_de(excel_path: str | Path, entry: dict) -> dict:
                         break
 
         sheet_xml = zip_data[sheet_file].decode("utf-8")
+
+        # ensure center-aligned style for written cells
+        styles_before = zip_data.get("xl/styles.xml", b"").decode("utf-8")
+        styles_after, _center_xf = _find_or_create_center_xf(styles_before)
+        zip_data["xl/styles.xml"] = styles_after.encode("utf-8")
 
     # ── 2. 解析 Row 2 表头 → {header: col_letter} ──
     row2_cells = {}
@@ -1118,7 +1210,7 @@ def insert_de(excel_path: str | Path, entry: dict) -> dict:
     def _build_cell(col_letter: str, row_num: int, value: str) -> str:
         ref = f"{col_letter}{row_num}"
         return (
-            f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">'
+            f'<c r="{ref}" t="inlineStr" s="{_center_xf}"><is><t xml:space="preserve">'
             f'{_xml_escape(value)}</t></is></c>'
         )
 
@@ -1255,6 +1347,16 @@ def parse_us_batch(text: str) -> list[dict]:
                     item["price"] = v
                 elif k in ("发车、发船后配送时段", "时效"):
                     item["delivery_text"] = v
+                elif k == "实际发货渠道":
+                    item["channel"] = v.split("--")[0].strip()
+                elif k == "仓库":
+                    item["warehouse"] = v
+                elif k == "箱数":
+                    item["quantity_ref"] = v
+                elif k in ("SKU", "sku"):
+                    item["sku_count"] = v
+                elif k == "货件号":
+                    item["fba_code"] = v
             else:
                 item["channel"] = ln
 
@@ -1271,6 +1373,8 @@ def parse_us_batch(text: str) -> list[dict]:
             merged["weight"] = merged.pop("重量")
         if "开船时间" in merged:
             merged["ship_date_text"] = merged.pop("开船时间")
+        if "发车、发船时间" in merged:
+            merged["ship_date_text"] = merged.pop("发车、发船时间")
         merged.update(item)
         shipments.append(merged)
 
@@ -1624,6 +1728,8 @@ def insert_us(excel_path: str | Path, shipments: list[dict],
     4. 插入新行（全列边框）
     5. 排序 → 写回 ZIP
     """
+    global STYLE_BORDER, STYLE_YELLOW
+
     excel_path = Path(excel_path)
     backup_path = excel_path.with_name(f"{excel_path.stem}_备份{excel_path.suffix}")
     shutil.copy2(excel_path, backup_path)
@@ -1635,6 +1741,16 @@ def insert_us(excel_path: str | Path, shipments: list[dict],
     num_to_delete = len(source_rows)
     insert_at = min(source_rows)
     net_shift = num_new - num_to_delete
+
+    # ── ensure center-aligned styles exist per-file ──
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        styles_raw = zf.read("xl/styles.xml").decode("utf-8")
+        styles_modified, _border_idx = _find_or_create_center_xf(
+            styles_raw, needs_border=True)
+        styles_modified, _yellow_idx = _find_or_create_center_xf(
+            styles_modified, needs_border=True, needs_yellow_fill=True)
+        STYLE_BORDER = str(_border_idx)
+        STYLE_YELLOW = str(_yellow_idx)
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         sheet_raw = zf.read("xl/worksheets/sheet1.xml")
@@ -1702,6 +1818,8 @@ def insert_us(excel_path: str | Path, shipments: list[dict],
             for item in zin.infolist():
                 if item.filename == "xl/worksheets/sheet1.xml":
                     zout.writestr(item, sheet_new)
+                elif item.filename == "xl/styles.xml":
+                    zout.writestr(item, styles_modified)
                 else:
                     zout.writestr(item, zin.read(item.filename))
         out_bytes = out_buf.getvalue()
