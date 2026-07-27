@@ -4,7 +4,7 @@
 
 当前支持 **宁致 (NZ)**、**云驼 (999)**、**小满 (XM)** 三家，采用适配器模式，可扩展更多公司。
 
-## 四大模块
+## 五大模块
 
 | 模块 | 入口 | 功能 |
 |------|------|------|
@@ -12,6 +12,7 @@
 | 数据录入 | `python -m src.data_entry` | IM 文本解析 → 按日期插入 Excel |
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert` | ASIN→图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate` | 旧规范 Excel → 新规范列位映射 |
+| 跨表数据填写 | `python -m src.cross_table` | 发货表→统计表 ASIN 关联，扣在采/加在途 |
 
 ## 架构
 
@@ -65,6 +66,9 @@ python -m src.image_inserter insert "C:\path\to\发货明细表.xlsx"
 
 # 旧格式迁移
 python -m src.migrate "C:\path\to\旧格式.xlsx"
+
+# 跨表数据填写（支持多个发货表）
+python -m src.cross_table "C:\path\to\统计表.xlsx" "C:\path\to\发货表1.xlsx" "C:\path\to\发货表2.xlsx"
 ```
 
 ### 自然语言调用（OpenClaw Skill）
@@ -124,6 +128,7 @@ python -m src.migrate "C:\path\to\旧格式.xlsx"
 ├── src/
 │   ├── cdp_client.py           # CDP WebSocket 通信层 + fetch_api()
 │   ├── cdp_util.py             # CDP 工具函数 (val)
+│   ├── cross_table.py          # 跨表填写 — 发货表→统计表 在采/在途更新
 │   ├── data_entry.py           # 半结构化物流文本解析 + 自动填入 Excel
 │   ├── excel_reader.py         # 读取 + 表头自动匹配 + 前缀归属 + 合并单元格
 │   ├── excel_writer.py         # 按公司写物流轨迹N列 + 建列 + 迁移清理 + 备份
@@ -241,6 +246,23 @@ python -m src.migrate "C:\path\to\旧格式.xlsx" -o "C:\path\to\规范版.xlsx"
 - 日期序列号转换
 - 价格拆分（`9+2` → 价格 9 + 附加费 2）
 - 格式完整保留（或在新建文件时统一 等线/细线边框/自适应列宽行高）
+
+## 跨表数据填写
+
+根据发货信息表自动更新统计表的在采/在途数量。按 ASIN 关联两表，从"在采"扣减发货数量，根据发货店铺（稳再/柘流）累加到对应的"在途"列。
+
+```bash
+python -m src.cross_table <统计表> <发货表1> [发货表2] ...
+```
+
+**逻辑**：
+- 在采 -= 发货数量
+- 发货店铺含"稳再" → 稳再在途 += 发货数量
+- 发货店铺含"柘流" → 柘流在途 += 发货数量
+- ASIN 找不到 → 报警提示；在采扣至负数 → 报警
+- 写入前自动备份统计表
+
+**自然语言触发**：`"帮我把发货表更新到备货计划里"`
 
 ## 缺失追踪
 
