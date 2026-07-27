@@ -6,7 +6,7 @@
   并根据发货店铺（稳再/柘流）累加到对应的"在途"列。
 
 用法:
-  python -m src.cross_table <统计表路径> <发货表路径>
+  python -m src.cross_table <统计表路径> <发货表路径...>
 """
 
 from __future__ import annotations
@@ -210,22 +210,27 @@ def _safe_int(val) -> int:
 
 # ── 主入口 ──
 
-def cross_update(stats_path: str | Path, shipping_path: str | Path) -> dict:
+def cross_update(stats_path: str | Path, *shipping_paths: str | Path) -> dict:
     """跨表填写主函数。
 
     Returns:
         {updated, missing, negative, backup}
     """
     stats_path = Path(stats_path)
-    shipping_path = Path(shipping_path)
 
-    # 1. 读发货信息表
-    print(f"读取发货信息表: {shipping_path}")
-    shipments = _read_shipping(shipping_path)
+    # 1. 读所有发货信息表
+    shipments: list[dict] = []
+    for sp in shipping_paths:
+        sp = Path(sp)
+        print(f"读取发货信息表: {sp}")
+        batch = _read_shipping(sp)
+        print(f"  找到 {len(batch)} 条发货记录")
+        shipments.extend(batch)
+
     if not shipments:
-        print("  未找到有效数据行 (需要 asin 以 B0 开头 + 发货店铺 + 发货数量)")
+        print("未找到有效数据行 (需要 asin 以 B0 开头 + 发货店铺 + 发货数量)")
         return {"updated": 0, "missing": 0, "negative": 0}
-    print(f"  找到 {len(shipments)} 条发货记录")
+    print(f"共 {len(shipments)} 条发货记录")
 
     # 2. 备份统计表
     backup_path = stats_path.with_name(f"{stats_path.stem}_备份{stats_path.suffix}")
@@ -247,9 +252,9 @@ def main():
     import argparse
     p = argparse.ArgumentParser(description="跨表数据填写：根据发货信息表更新统计表的在采/在途数量")
     p.add_argument("stats", help="统计表路径 (被更新的目标文件)")
-    p.add_argument("shipping", help="发货信息表路径 (数据来源, 只读)")
+    p.add_argument("shipping", nargs="+", help="发货信息表路径 (可多个, 数据来源只读)")
     args = p.parse_args()
-    cross_update(args.stats, args.shipping)
+    cross_update(args.stats, *args.shipping)
 
 
 if __name__ == "__main__":
