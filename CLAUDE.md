@@ -6,7 +6,7 @@
 
 当前支持三家公司：宁致(NZ)、云驼(999)、小满(XM)。采用适配器模式，可扩展。
 
-## 四大模块
+## 五大模块
 
 | 模块 | 入口 | 功能 |
 |------|------|------|
@@ -14,6 +14,7 @@
 | 数据录入 | `python -m src.data_entry` | IM 文本解析 → 按日期插入 Excel |
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert` | ASIN→图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate` | 旧规范 Excel → 新规范列位映射 |
+| 跨表数据填写 | `python -m src.cross_table` | 发货表→统计表 ASIN 关联，扣在采/加在途 |
 
 ## 核心架构
 
@@ -71,6 +72,7 @@ Logistics_Automation/
 ├── src/
 │   ├── cdp_client.py        # CDP WebSocket + fetch_api()
 │   ├── cdp_util.py           # CDP 工具函数 (val)
+│   ├── cross_table.py       # 跨表数据填写 — 发货表→统计表 在采/在途更新
 │   ├── data_entry.py         # 半结构化物流文本解析 + 自动填入 Excel
 │   ├── excel_reader.py       # 读取 + 表头自动匹配 + 前缀归属
 │   ├── excel_writer.py       # 按公司写物流轨迹N列 + 备份
@@ -106,6 +108,9 @@ python -m src.image_inserter insert <目标Excel>
 
 # 旧格式迁移
 python -m src.migrate <旧格式Excel> -o <输出路径>
+
+# 跨表数据填写
+python -m src.cross_table <统计表> <发货表...>
 ```
 
 ## 平台差异

@@ -1,6 +1,6 @@
 ---
 name: logistics-track
-description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配和格式迁移
+description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配、格式迁移、跨表数据填写
 type: skill
 platform: windows
 ---
@@ -14,7 +14,7 @@ platform: windows
 - "帮我查202606宁致和云驼的物流轨迹"
 - "查询这个Excel里的物流单号"
 - "跑一下物流轨迹查询"
-- "补查顽固单号"
+- "帮我把发货表更新到备货计划里"
 
 ## 首次使用（同事拿到 Skill 后只需做一次）
 
@@ -72,6 +72,9 @@ python -m src.image_inserter insert <目标Excel>
 
 # 旧格式迁移
 python -m src.migrate <旧格式Excel> -o <输出路径>
+
+# 跨表数据填写
+python -m src.cross_table <统计表> <发货表...>
 ```
 
 | 参数 | 说明 |
@@ -189,6 +192,25 @@ python -m src.data_entry <excel> --de
 python -m src.data_entry <excel>          # 单条
 python -m src.data_entry <excel> --batch  # 批量（空行分隔）
 ```
+
+## 跨表数据填写
+
+根据发货信息表自动更新统计表。按 ASIN 关联两表，从"在采"扣减发货数量，根据发货店铺（稳再/柘流）累加到对应的"在途"列。
+
+触发示例：
+- "帮我把发货表更新到备货计划里"
+- "把这些发货表的数据同步到统计表"
+
+```bash
+python -m src.cross_table <统计表> <发货表1> [发货表2] ...
+```
+
+逻辑：
+1. 按表头匹配两表列位（asin、发货店铺、发货数量、在采、稳再在途、柘流在途）
+2. 在采 -= 发货数量
+3. 发货店铺含"稳再" → 稳再在途 += 发货数量；含"柘流" → 柘流在途 += 发货数量
+4. ASIN 找不到 → 报警；在采扣至负数 → 报警
+5. 自动备份统计表后写回
 
 ## 列位映射
 
