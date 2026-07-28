@@ -1079,6 +1079,9 @@ def insert_de(excel_path: str | Path, entry: dict) -> dict:
     import re as _re
     excel_path = Path(excel_path)
 
+    backup_path = excel_path.with_name(f"{excel_path.stem}_备份{excel_path.suffix}")
+    shutil.copy2(excel_path, backup_path)
+
     fields = _build_de_fields(entry)
     # 内部 key → 格式化后的值（非空）
     write_vals = {k: v for k, v in fields.items() if v}
@@ -1116,7 +1119,7 @@ def insert_de(excel_path: str | Path, entry: dict) -> dict:
     row2_cells = {}
     row2_m = _re.search(r'<row[^>]*r="2"[^>]*>(.*?)</row>', sheet_xml, _re.DOTALL)
     if not row2_m:
-        return {"error": "Row 2 (header) not found"}
+        return {"error": "Row 2 (header) not found", "backup": str(backup_path)}
     for cell_m in _re.finditer(r'<c[^>]*r="([A-Z]+)2"[^>]*>(.*?)</c>', row2_m.group(1), _re.DOTALL):
         col_letter = cell_m.group(1)
         cell_content = cell_m.group(2)
@@ -1154,7 +1157,7 @@ def insert_de(excel_path: str | Path, entry: dict) -> dict:
     name_col = key_to_col.get("product")
     box_col = key_to_col.get("quantity")
     if not name_col or not box_col:
-        return {"error": "Missing 品名 or 箱数 column in header"}
+        return {"error": "Missing 品名 or 箱数 column in header", "backup": str(backup_path)}
 
     # ── 3. 解析数据行 → 匹配产品 ──
     ss_xml = zip_data.get("xl/sharedStrings.xml", b"").decode("utf-8")
@@ -1270,6 +1273,7 @@ def insert_de(excel_path: str | Path, entry: dict) -> dict:
         "matched": matched,
         "total_products": len(entry["products"]),
         "results": results,
+        "backup": str(backup_path),
     }
 
 
