@@ -11,5 +11,5 @@ if %errorlevel% equ 0 (
 
 if not exist "%PROFILE%" mkdir "%PROFILE%"
 rd /s /q "%PROFILE%\Default\Sessions" 2>nul
-start "" msedge --remote-debugging-port=9222 --user-data-dir="%PROFILE%" --no-first-run --no-default-browser-check http://nzhexp.nextsls.com/tms/wos/shipment?page=1^&pageSize=30^&activeTab=ready http://sfgjdl.nextsls.com/wos https://www.17track.net/zh-cn http://www.360vipwuliu.com/ https://yplogistics.com/?hmsr=wechat^&hmpl=^&hmcu=^&hmkw=^&hmci= http://smtgyl.nextsls.com/wos http://39.108.216.104:5001/#/tracking http://xmsdwl.nextsls.com/tracking/app#/tracking
+start "" msedge --remote-debugging-port=9222 --user-data-dir="%PROFILE%" --no-first-run --no-default-browser-check http://nzhexp.nextsls.com/tms/wos/shipment?page=1^&pageSize=30^&activeTab=ready http://sfgjdl.nextsls.com/wos https://www.17track.net/zh-cn http://www.360vipwuliu.com/ https://yplogistics.com/?hmsr=wechat^&hmpl=^&hmcu=^&hmkw=^&hmci= http://smtgyl.nextsls.com/wos http://39.108.216.104:5001/#/tracking http://xmsdwl.nextsls.com/tracking/app#/tracking https://www.amazon.de/
 pause
