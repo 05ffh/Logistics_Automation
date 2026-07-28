@@ -1308,6 +1308,8 @@ def parse_us_batch(text: str) -> list[dict]:
             if key == "货物名称":
                 continue
             shared[key] = m.group(2).strip()
+        elif re.match(r"^[一-鿿]+-[A-Z]{2}$", ln):
+            shared["发货店铺"] = ln
 
     remaining = "\n".join(lines[first_item_idx:])
     item_blocks = re.split(r"\n(?=\d+、)", remaining)
