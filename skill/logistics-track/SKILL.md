@@ -1,6 +1,6 @@
 ---
 name: logistics-track
-description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配、格式迁移、跨表数据填写
+description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配、格式迁移、跨表数据填写、Amazon关键词排名查询(刮水器/猫砂垫/反光衣)
 type: skill
 platform: windows
 ---
@@ -15,6 +15,8 @@ platform: windows
 - "查询这个Excel里的物流单号"
 - "跑一下物流轨迹查询"
 - "帮我把发货表更新到备货计划里"
+- "查今天的刮水器排名"
+- "查猫砂垫排名"
 
 ## 首次使用（同事拿到 Skill 后只需做一次）
 
@@ -75,6 +77,11 @@ python -m src.migrate <旧格式Excel> -o <输出路径>
 
 # 跨表数据填写
 python -m src.cross_table <统计表> <发货表...>
+
+# 关键词排名查询
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...   # 刮水器 DE
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P        # 猫砂垫 FR
+python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ ...    # 反光衣 FR
 ```
 
 | 参数 | 说明 |
@@ -254,3 +261,32 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 | 单号查询无结果 | 保留旧轨迹不覆盖，记入 misses JSON 供后续补查 |
 | 某公司成功率异常低 | ⚠️ 告警 + 跳过写入该公司（保护存量数据不被覆盖） |
 | 页面结构变化 | 金丝雀自检可提前发现；异常检测在跑时兜底 |
+
+## 关键词排名查询
+
+每天自动查 Amazon 搜索结果中的自然位排名 + 广告位页码 + BSR 大类排名。
+
+**安全策略**：只用 `evaluate()` 读 DOM，绝不 `click()`；翻页只用 `window.location.href`；广告位通过 Sponsored 徽章文字识别。
+
+**站点支持**：Amazon DE (`--site de`) / Amazon FR (`--site fr`)，`.bat` 文件中需包含对应站点标签页。
+
+### 产品配置
+
+| 产品 | 站点 | ASIN | BSR ASIN | Excel 路径 |
+|------|------|------|----------|-----------|
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 | 刮水器关键词.xlsx |
+| 猫砂垫 | fr | B0CH4N8V6P | B0CH4N8V6P | 猫砂垫关键词7.29.xlsx |
+| 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | B0GCDF56DJ | 反光衣关键词.xlsx |
+
+### 结果格式
+
+`9` = 自然位第 9；`/` = 未找到；`/（广告1）` = 未找到自然位、广告在第 1 页；`9（广告1）` = 自然位第 9、同时广告在第 1 页。
+
+### 特性
+
+- 进度条 + 断点恢复（`.progress.json`）
+- 模拟人工浏览节奏（随机延迟、分段滚动）
+- WebSocket 断线自动重连
+- BSR 自动检测数据起始列
+- `--dry-run` 干跑验证
+- `--reset` 忽略断点重新开始

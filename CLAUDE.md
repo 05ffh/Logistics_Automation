@@ -6,7 +6,7 @@
 
 当前支持三家公司：宁致(NZ)、云驼(999)、小满(XM)。采用适配器模式，可扩展。
 
-## 五大模块
+## 六大模块
 
 | 模块 | 入口 | 功能 |
 |------|------|------|
@@ -15,6 +15,24 @@
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert` | ASIN→图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate` | 旧规范 Excel → 新规范列位映射 |
 | 跨表数据填写 | `python -m src.cross_table` | 发货表→统计表 ASIN 关联，扣在采/加在途 |
+| 关键词排名 | `python -m src.keyword_rank` | CDP 查 Amazon 搜索排名 + BSR → 写回 Excel |
+
+## 关键词排名产品配置
+
+| 产品 | --site | --asin | --bsr-asin | 数据起始列 |
+|------|--------|--------|------------|-----------|
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT | B0CLXXD2X4 | 自动检测 |
+| 猫砂垫 | fr | B0CH4N8V6P | B0CH4N8V6P | 自动检测 |
+
+用法:
+```bash
+# 刮水器
+python -m src.keyword_rank <Excel路径> --site de \
+    --asin B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT
+
+# 猫砂垫
+python -m src.keyword_rank <Excel路径> --site fr --asin B0CH4N8V6P
+```
 
 ## 核心架构
 
@@ -111,6 +129,11 @@ python -m src.migrate <旧格式Excel> -o <输出路径>
 
 # 跨表数据填写
 python -m src.cross_table <统计表> <发货表...>
+
+# 关键词排名查询
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...  # 刮水器
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P      # 猫砂垫
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P --dry-run
 ```
 
 ## 平台差异
