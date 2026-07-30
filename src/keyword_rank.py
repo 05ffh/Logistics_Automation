@@ -51,27 +51,8 @@ KEYWORD_GAP_MAX = 4.0 # 关键词切换间隔最大
 _EXTRACT_JS = """
 (() => {
     const results = [];
+    const adTexts = ['Sponsored', 'Sponsorisé', 'Gesponsert'];
 
-    // Build a set of elements that are direct ancestors of Sponsored text (depth ≤ 3).
-    // This covers: deeply nested ad badges (up to 7 levels), the card itself, and nearby wrappers.
-    // 8 levels is far enough for deep nesting but short of the search-results container (~14 levels away).
-    const adAncestors = new Set();
-    const allTextWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let textNode;
-    while ((textNode = allTextWalker.nextNode())) {
-        const t = textNode.textContent.trim();
-        if (t === 'Sponsored' || t === 'Sponsorisé' || t === 'Gesponsert') {
-            let el = textNode.parentElement;
-            for (let i = 0; i < 8 && el && el !== document.body; i++) {
-                adAncestors.add(el);
-                el = el.parentElement;
-            }
-        }
-    }
-
-    // Scan all cards. A card is an ad iff it or its parent (≤ 2 levels up) is in adAncestors.
-    // This limits Brand ad grouping to immediate wrappers, avoiding cross-contamination
-    // with distant Brand headers or the search results container.
     const cards = document.querySelectorAll('[data-asin]');
     for (const card of cards) {
         const asin = card.getAttribute('data-asin');
@@ -80,11 +61,27 @@ _EXTRACT_JS = """
         const hrefs = Array.from(card.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
         const dpLink = hrefs.find(h => /\\/dp\\//.test(h) && /ref=sr_/.test(h));
 
-        let hasAd = adAncestors.has(card);
+        // Pass 1: Sponsored text inside card's own subtree (Sponsored Products, Video ads).
+        let hasAd = false;
+        const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+            if (adTexts.includes(textNode.textContent.trim())) {
+                hasAd = true;
+                break;
+            }
+        }
+
+        // Pass 2: Card inside a Sponsored Brand container (Sponsored text is in
+        // the header banner, not inside individual product cards).
         if (!hasAd) {
             let el = card.parentElement;
-            for (let i = 0; i < 2 && el; i++) {
-                if (adAncestors.has(el)) { hasAd = true; break; }
+            for (let i = 0; i < 20 && el && el !== document.body; i++) {
+                const cls = el.className || '';
+                if (cls.includes('sb-desktop') || cls.includes('_c2itd_container')) {
+                    hasAd = true;
+                    break;
+                }
                 el = el.parentElement;
             }
         }
