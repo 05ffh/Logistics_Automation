@@ -50,26 +50,44 @@ KEYWORD_GAP_MAX = 4.0 # 关键词切换间隔最大
 
 _EXTRACT_JS = """
 (() => {
-    const seen = new Set();
     const results = [];
-    const cards = document.querySelectorAll('[data-component-type="s-search-result"], [data-component-type="sbv-video-single-product"]');
-    for (const card of cards) {
-        const asin = card.getAttribute('data-asin');
-        if (!asin || seen.has(asin)) continue;
-        seen.add(asin);
-        const hrefs = Array.from(card.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
-        const dpLink = hrefs.find(h => /\\/dp\\//.test(h) && /ref=sr_/.test(h));
-        // Sponsored detection via text nodes — handles aria-label gaps, nested spans, video ads
-        let hasAd = false;
-        const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
-        let node;
-        while ((node = walker.nextNode())) {
-            const t = node.textContent.trim();
-            if (t === 'Sponsored' || t === 'Sponsorisé' || t === 'Gesponsert') {
-                hasAd = true;
-                break;
+
+    // Build a set of elements that are direct ancestors of Sponsored text (depth ≤ 3).
+    // This covers: the card itself (regular ad), the immediate wrapper (Brand product).
+    const adAncestors = new Set();
+    const allTextWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let textNode;
+    while ((textNode = allTextWalker.nextNode())) {
+        const t = textNode.textContent.trim();
+        if (t === 'Sponsored' || t === 'Sponsorisé' || t === 'Gesponsert') {
+            let el = textNode.parentElement;
+            for (let i = 0; i < 3 && el && el !== document.body; i++) {
+                adAncestors.add(el);
+                el = el.parentElement;
             }
         }
+    }
+
+    // Scan all cards. A card is an ad iff it or its parent (≤ 2 levels up) is in adAncestors.
+    // This limits Brand ad grouping to immediate wrappers, avoiding cross-contamination
+    // with distant Brand headers or the search results container.
+    const cards = document.querySelectorAll('[data-asin]');
+    for (const card of cards) {
+        const asin = card.getAttribute('data-asin');
+        if (!asin) continue;
+
+        const hrefs = Array.from(card.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
+        const dpLink = hrefs.find(h => /\\/dp\\//.test(h) && /ref=sr_/.test(h));
+
+        let hasAd = adAncestors.has(card);
+        if (!hasAd) {
+            let el = card.parentElement;
+            for (let i = 0; i < 2 && el; i++) {
+                if (adAncestors.has(el)) { hasAd = true; break; }
+                el = el.parentElement;
+            }
+        }
+
         let rank = null;
         if (dpLink) { const m = dpLink.match(/ref=sr_1_(\\d+)/); if (m) rank = parseInt(m[1]); }
         results.push({asin, rank, isAd: hasAd});
@@ -185,7 +203,7 @@ class KeywordRankChecker:
                     continue
                 if r["isAd"] and r["asin"] in self.ad_asins:
                     ad_pages.add(page)
-                elif r["rank"] is not None:
+                if r["rank"] is not None:
                     if best_rank is None or r["rank"] < best_rank:
                         best_rank = r["rank"]
 
