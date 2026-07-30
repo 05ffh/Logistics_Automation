@@ -19,18 +19,17 @@
 
 ## 关键词排名产品配置
 
-| 产品 | --site | --asin | --ad-asin | --bsr-asin | 数据起始列 |
-|------|--------|--------|-----------|------------|-----------|
-| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT | B0CLXXD2X4 B0H1R1DGKH | B0CLXXD2X4 | 自动检测 |
-| 猫砂垫 | fr | B0CH4N8V6P | — | B0CH4N8V6P | 自动检测 |
-| 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | — | B0GCDF56DJ | 自动检测 |
+| 产品 | --site | --asin | --bsr-asin | 数据起始列 |
+|------|--------|--------|------------|-----------|
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT | B0CLXXD2X4 | 自动检测 |
+| 猫砂垫 | fr | B0CH4N8V6P | B0CH4N8V6P | 自动检测 |
+| 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | B0GCDF56DJ | 自动检测 |
 
 用法:
 ```bash
-# 刮水器 (自然位查全部7个ASIN，广告位只看2个指定ASIN)
+# 刮水器 (7个ASIN，自然位和广告位全部追踪)
 python -m src.keyword_rank <Excel路径> --site de \
-    --asin B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT \
-    --ad-asin B0CLXXD2X4 B0H1R1DGKH
+    --asin B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT
 
 # 猫砂垫
 python -m src.keyword_rank <Excel路径> --site fr --asin B0CH4N8V6P
