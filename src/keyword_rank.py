@@ -52,15 +52,24 @@ _EXTRACT_JS = """
 (() => {
     const seen = new Set();
     const results = [];
-    const cards = document.querySelectorAll('[data-component-type="s-search-result"]');
+    const cards = document.querySelectorAll('[data-component-type="s-search-result"], [data-component-type="sbv-video-single-product"]');
     for (const card of cards) {
         const asin = card.getAttribute('data-asin');
         if (!asin || seen.has(asin)) continue;
         seen.add(asin);
         const hrefs = Array.from(card.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
         const dpLink = hrefs.find(h => /\\/dp\\//.test(h) && /ref=sr_/.test(h));
-        // Sponsored badge via aria-label — stable across DOM changes, accessibility compliance
-        const hasAd = card.querySelector('[aria-label*=\"Sponsored\"], [aria-label*=\"Sponsorisé\"], [aria-label*=\"Gesponsert\"]') !== null;
+        // Sponsored detection via text nodes — handles aria-label gaps, nested spans, video ads
+        let hasAd = false;
+        const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const t = node.textContent.trim();
+            if (t === 'Sponsored' || t === 'Sponsorisé' || t === 'Gesponsert') {
+                hasAd = true;
+                break;
+            }
+        }
         let rank = null;
         if (dpLink) { const m = dpLink.match(/ref=sr_1_(\\d+)/); if (m) rank = parseInt(m[1]); }
         results.push({asin, rank, isAd: hasAd});
