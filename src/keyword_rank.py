@@ -53,7 +53,8 @@ _EXTRACT_JS = """
     const results = [];
 
     // Build a set of elements that are direct ancestors of Sponsored text (depth ≤ 3).
-    // This covers: the card itself (regular ad), the immediate wrapper (Brand product).
+    // This covers: deeply nested ad badges (up to 7 levels), the card itself, and nearby wrappers.
+    // 8 levels is far enough for deep nesting but short of the search-results container (~14 levels away).
     const adAncestors = new Set();
     const allTextWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let textNode;
@@ -61,7 +62,7 @@ _EXTRACT_JS = """
         const t = textNode.textContent.trim();
         if (t === 'Sponsored' || t === 'Sponsorisé' || t === 'Gesponsert') {
             let el = textNode.parentElement;
-            for (let i = 0; i < 3 && el && el !== document.body; i++) {
+            for (let i = 0; i < 8 && el && el !== document.body; i++) {
                 adAncestors.add(el);
                 el = el.parentElement;
             }
