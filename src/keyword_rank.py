@@ -59,18 +59,8 @@ _EXTRACT_JS = """
         seen.add(asin);
         const hrefs = Array.from(card.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
         const dpLink = hrefs.find(h => /\\/dp\\//.test(h) && /ref=sr_/.test(h));
-        // Sponsored badge detection: organic cards may contain /sspa/click links
-        // in sub-sections (carousels etc), so we detect ads by the badge text instead.
-        let hasAd = false;
-        const spans = card.querySelectorAll('span');
-        for (const span of spans) {
-            const t = span.textContent.trim();
-            if (!t) continue;
-            if (t === 'Sponsored' || t === 'Sponsorisé' || t === 'Gesponsert') {
-                hasAd = true;
-                break;
-            }
-        }
+        // Sponsored badge via aria-label — stable across DOM changes, accessibility compliance
+        const hasAd = card.querySelector('[aria-label*=\"Sponsored\"], [aria-label*=\"Sponsorisé\"], [aria-label*=\"Gesponsert\"]') !== null;
         let rank = null;
         if (dpLink) { const m = dpLink.match(/ref=sr_1_(\\d+)/); if (m) rank = parseInt(m[1]); }
         results.push({asin, rank, isAd: hasAd});
