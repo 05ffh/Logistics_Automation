@@ -272,11 +272,11 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 ### 产品配置
 
-| 产品 | 站点 | ASIN | BSR ASIN | Excel 路径 |
-|------|------|------|----------|-----------|
-| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 | 刮水器关键词.xlsx |
-| 猫砂垫 | fr | B0CH4N8V6P | B0CH4N8V6P | 猫砂垫关键词7.29.xlsx |
-| 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | B0GCDF56DJ | 反光衣关键词.xlsx |
+| 产品 | 站点 | ASIN | 广告 ASIN | BSR ASIN | Excel 路径 |
+|------|------|------|-----------|----------|-----------|
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 B0H1R1DGKH | B0CLXXD2X4 | 刮水器关键词.xlsx |
+| 猫砂垫 | fr | B0CH4N8V6P | 同 ASIN | B0CH4N8V6P | 猫砂垫关键词7.29.xlsx |
+| 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | 同 ASIN | B0GCDF56DJ | 反光衣关键词.xlsx |
 
 ### 结果格式
 
@@ -290,3 +290,4 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 - BSR 自动检测数据起始列
 - `--dry-run` 干跑验证
 - `--reset` 忽略断点重新开始
+- `--ad-asin` 指定广告位追踪 ASIN（默认追踪全部 `--asin`）

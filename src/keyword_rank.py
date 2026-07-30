@@ -91,8 +91,10 @@ class KeywordRankChecker:
     """关键词排名查询器 — CDP 操控浏览器，零点击安全策略。"""
 
     def __init__(self, asins: set[str], site: str = "de", bsr_asin: str = "",
+                 ad_asins: set[str] | None = None,
                  host: str = CDP_HOST, port: int = CDP_PORT):
         self.asins = asins
+        self.ad_asins = ad_asins or asins
         self.site = site
         self.bsr_asin = bsr_asin or next(iter(asins), "")
         self.cdp = CdpClient(host, port, timeout=30)
@@ -172,7 +174,7 @@ class KeywordRankChecker:
             for r in results:
                 if r["asin"] not in self.asins:
                     continue
-                if r["isAd"]:
+                if r["isAd"] and r["asin"] in self.ad_asins:
                     ad_pages.add(page)
                 elif r["rank"] is not None:
                     if best_rank is None or r["rank"] < best_rank:
@@ -352,6 +354,8 @@ def main():
                         help="要追踪的产品 ASIN (至少一个)")
     parser.add_argument("--bsr-asin", default="",
                         help="用于查询 BSR 的 ASIN (默认使用第一个 --asin)")
+    parser.add_argument("--ad-asin", nargs="*", default=None,
+                        help="只追踪这些 ASIN 的广告位 (默认追踪全部 --asin)")
     parser.add_argument("--data-start-col", type=int, default=None,
                         help="数据起始列号 (默认自动检测)")
     parser.add_argument("--dry-run", action="store_true", help="只查询不写入")
@@ -381,8 +385,9 @@ def main():
         results, done = [], 0
 
     # ── 查询 ──
+    ad_asins = set(args.ad_asin) if args.ad_asin else None
     checker = KeywordRankChecker(asins, site=args.site, bsr_asin=args.bsr_asin,
-                                 host=args.host, port=args.port)
+                                 ad_asins=ad_asins, host=args.host, port=args.port)
 
     bsr = next((r["_bsr"] for r in results if "_bsr" in r), "")
 
