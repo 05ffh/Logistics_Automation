@@ -25,6 +25,11 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+try:
+    from .cli_utils import fatal_error, print_json_summary, RunTimer
+except ImportError:
+    from cli_utils import fatal_error, print_json_summary, RunTimer
+
 HEADER_ROW = 2
 
 # OOXML namespace
@@ -1861,80 +1866,110 @@ def main():
     batch_mode = "--batch" in args
     us_rule = "--us" in args
     de_rule = "--de" in args
+    json_output = "--json" in args
     text = sys.stdin.read().strip()
+
+    try:
+        _run_data_entry(excel_path, text, batch_mode, us_rule, de_rule, json_output)
+    except Exception as e:
+        fatal_error("data_entry", e, excel=str(excel_path),
+                     mode="us" if us_rule else "de" if de_rule else "batch" if batch_mode else "single")
+
+
+def _run_data_entry(excel_path, text, batch_mode, us_rule, de_rule, json_output=False):
+    timer = RunTimer()
 
     if not text:
         print("No input text provided.")
-        sys.exit(1)
+        return
+
+    mode = "us" if us_rule else "de" if de_rule else "batch" if batch_mode else "single"
+    result = None
 
     # ── US 模式：复制原产品行到各仓库，ZIP XML 直写 ──
     if us_rule:
         shipments = parse_us_batch(text)
         if not shipments:
             print("Failed to parse US input text.")
-            sys.exit(1)
+            return
         print(f"Parsed {len(shipments)} shipments.")
 
         products, source_rows = extract_source_products(excel_path)
         if not products:
             print("Error: No source product rows found in target Excel.")
-            sys.exit(1)
+            return
         print(f"Found {len(products)} source products (rows {source_rows}).")
 
         result = insert_us(excel_path, shipments, products, source_rows)
         if "error" in result:
             print(f"Error: {result['error']}")
-            sys.exit(1)
+            return
         print(f"Inserted {result['inserted_rows']} rows (rows {result['start_row']}-{result['end_row']}) "
               f"into Sheet={result['sheet']}, deleted {len(source_rows)} old product rows.")
-        return
+        _maybe_json(json_output, timer, result, mode, excel_path)
 
     # ── DE 模式：匹配已有行，回填 ──
-    if de_rule:
+    elif de_rule:
         entry = parse_de_entry(text)
         if not entry:
             print("Failed to parse DE input text.")
-            sys.exit(1)
+            return
         print(f"Parsed {len(entry['products'])} products.")
         result = insert_de(excel_path, entry)
         if "error" in result:
             print(f"Error: {result['error']}")
-            sys.exit(1)
+            return
         for r in result["results"]:
             status = f"Row{r['row']}" if r["row"] else "NOT FOUND"
             print(f"  {r['name'][:40]}: {status}")
         print(f"Matched {result['matched']}/{result['total_products']} products "
               f"in Sheet={result['sheet']}")
-        return
+        _maybe_json(json_output, timer, result, mode, excel_path)
 
     # ── 批量模式 ──
-    if batch_mode:
+    elif batch_mode:
         entries = parse_batch(text)
         if not entries:
             print("Failed to parse any entries from input text.")
-            sys.exit(1)
+            return
         print(f"Parsed {len(entries)} entries.")
         result = insert_batch(excel_path, entries)
         if "error" in result:
             print(f"Error: {result['error']}")
-            sys.exit(1)
+            return
         print(f"Inserted {result['inserted']} groups / {result['total_rows']} rows "
               f"into Sheet={result['sheet']}")
-        return
+        _maybe_json(json_output, timer, result, mode, excel_path)
 
     # ── 单条模式 ──
-    entry = parse_entry(text)
-    if not entry:
-        print("Failed to parse input text.")
-        sys.exit(1)
+    else:
+        entry = parse_entry(text)
+        if not entry:
+            print("Failed to parse input text.")
+            return
 
-    result = insert_entry(excel_path, entry)
-    if "error" in result:
-        print(f"Error: {result['error']}")
-        sys.exit(1)
+        result = insert_entry(excel_path, entry)
+        if "error" in result:
+            print(f"Error: {result['error']}")
+            return
 
-    print(f"Inserted at Sheet={result['sheet']} Row={result['row']} Date={result['date']}")
-    print(f"Fields: {', '.join(result['filled'])}")
+        print(f"Inserted at Sheet={result['sheet']} Row={result['row']} Date={result['date']}")
+        print(f"Fields: {', '.join(result['filled'])}")
+        _maybe_json(json_output, timer, result, mode, excel_path)
+
+
+def _maybe_json(enabled, timer, result, mode, excel_path):
+    if not enabled:
+        return
+    print_json_summary({
+        "module": "data_entry", "mode": mode, "status": "ok",
+        "elapsed": round(timer.elapsed, 1),
+        "excel": str(excel_path),
+        "sheet": result.get("sheet", ""),
+        "backup": result.get("backup"),
+        "details": {k: v for k, v in result.items()
+                     if k not in ("sheet", "backup")},
+    })
 
 
 if __name__ == "__main__":

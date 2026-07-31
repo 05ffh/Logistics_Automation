@@ -17,6 +17,11 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
+try:
+    from .cli_utils import fatal_error, print_json_summary, RunTimer
+except ImportError:
+    from cli_utils import fatal_error, print_json_summary, RunTimer
+
 HEADER_ROW = 2
 
 # ── 新格式表头（37 列，与 最新格式.xlsx 一致）──────────────────
@@ -335,8 +340,21 @@ def main():
     parser = argparse.ArgumentParser(description="迁移旧格式 Excel → 最终版规范")
     parser.add_argument("source", help="旧格式 Excel 路径")
     parser.add_argument("--output", "-o", default=None, help="输出路径")
+    parser.add_argument("--json", action="store_true", help="输出结构化 JSON 运行摘要")
     args = parser.parse_args()
-    migrate(args.source, args.output)
+    timer = RunTimer()
+    try:
+        result = migrate(args.source, args.output)
+        if args.json:
+            print_json_summary({
+                "module": "migrate", "status": "ok",
+                "elapsed": round(timer.elapsed, 1),
+                "source": str(args.source),
+                "output": str(result) if result else str(args.output or args.source),
+            })
+    except Exception as e:
+        fatal_error("migrate", e, source=str(args.source),
+                     output=str(args.output) if args.output else None)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,11 @@ def write_results(excel_path: str | Path, results: list[dict]) -> dict:
 
         _normalize_sheet(ws)
 
+    if updated == 0:
+        wb.close()
+        return {"updated": 0, "errors": errors, "backup": str(backup_path),
+                "skipped": True, "reason": "no rows updated — refusing to touch file"}
+
     try:
         wb.save(excel_path)
     except (PermissionError, OSError) as e:

@@ -29,6 +29,11 @@ import openpyxl
 
 from .cdp_client import CdpClient
 
+try:
+    from .cli_utils import fatal_error, print_json_summary, RunTimer
+except ImportError:
+    from cli_utils import fatal_error, print_json_summary, RunTimer
+
 # ── 站点配置 ────────────────────────────────────────────────────
 SITE_DOMAIN = {
     "de": "amazon.de",
@@ -179,14 +184,21 @@ class KeywordRankChecker:
     # ── 搜索 ──────────────────────────────────────────────────────
 
     def search_keyword(self, keyword: str, max_pages: int = MAX_PAGES) -> dict:
-        """搜索关键词，返回 {organic_rank, ad_pages}。"""
+        """搜索关键词，返回 {organic_rank, ad_pages}。
+
+        首关键词首页通过搜索框输入提交（模拟人工搜索行为），
+        后续页用 URL 翻页，保证广告布局与人工搜索一致。
+        """
         self._ensure_tab()
 
         best_rank: int | None = None
         ad_pages: set[int] = set()
 
         for page in range(1, max_pages + 1):
-            self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/s?k={quote(keyword)}&page={page}")
+            if page == 1:
+                self._search_via_box(keyword)
+            else:
+                self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/s?k={quote(keyword)}&page={page}")
             self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
             # 模拟人工浏览行为
@@ -209,6 +221,46 @@ class KeywordRankChecker:
                 break
 
         return {"organic_rank": best_rank, "ad_pages": sorted(ad_pages)}
+
+    def _search_via_box(self, keyword: str):
+        """通过搜索框输入+提交发起搜索，模拟人工操作。
+
+        先导航到 Amazon 首页，填入关键词，点击搜索按钮。
+        这样产生的 Referer、客户端事件等信号与人工搜索一致，
+        Amazon 广告引擎会按正常用户画像投放广告。
+        """
+        domain = SITE_DOMAIN[self.site]
+        url = self._safe_evaluate("window.location.href")
+        current = str(url.get("result", {}).get("result", {}).get("value", ""))
+
+        # 不在 Amazon 站点 → 先导航到首页
+        if domain not in current:
+            self._navigate(f"https://www.{domain}/")
+            self._human_delay(2.0, 3.0)
+
+        # 填入关键词（React/Vue 兼容：原生 value setter + 事件触发）
+        escaped = keyword.replace("\\", "\\\\").replace("'", "\\'")
+        fill_js = (
+            "(function(){"
+            "var sb=document.querySelector('#twotabsearchtextbox');"
+            "if(!sb)return 'no-searchbox';"
+            "sb.focus();"
+            "var d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');"
+            f"d.set.call(sb,'{escaped}');"
+            "sb.dispatchEvent(new Event('input',{bubbles:true}));"
+            "sb.dispatchEvent(new Event('change',{bubbles:true}));"
+            "var btn=document.querySelector('#nav-search-submit-button');"
+            "if(btn){btn.click();return 'clicked';}"
+            "var form=sb.closest('form');"
+            "if(form){form.submit();return 'submitted';}"
+            "return 'no-submit';"
+            "})()"
+        )
+        raw = self._safe_evaluate(fill_js)
+        result = str(raw.get("result", {}).get("result", {}).get("value", ""))
+        if result == "no-searchbox":
+            # 回退：可能已在搜索结果页，用 URL 导航
+            self._navigate(f"https://www.{domain}/s?k={quote(keyword)}")
 
     # ── 关键词间隔 ────────────────────────────────────────────────
 
@@ -314,7 +366,11 @@ def write_results(
     results: list[dict],
     bsr: str,
 ):
-    """将查询结果写入新日期列。"""
+    """将查询结果写入新日期列。结果为空时拒绝写入，避免空白列覆盖存量。"""
+    if not results:
+        print("WARNING: No keyword results to write — skipping save to protect existing data.")
+        return last_date_col + 1, None
+
     ws = wb.active
     new_col = last_date_col + 1
     today = datetime.now()
@@ -368,6 +424,41 @@ def _save_progress(progress_path: Path, results: list[dict]):
     progress_path.write_text(json.dumps({"results": results}, ensure_ascii=False), encoding="utf-8")
 
 
+def _build_summary(args, keywords, pure_results, bsr, timer,
+                   dry_run=False, column=None, backup=None):
+    """Build JSON summary for --json output."""
+    kw_results = {}
+    errors = []
+    for i, (kw, r) in enumerate(zip(keywords, pure_results)):
+        label = format_result(r.get("organic_rank"), r.get("ad_pages", []))
+        kw_results[kw] = label
+        if r.get("_error"):
+            errors.append({"keyword": kw, "error": r["_error"]})
+
+    summary = {
+        "module": "keyword_rank",
+        "mode": "dry_run" if dry_run else "live",
+        "status": "ok",
+        "elapsed": round(timer.elapsed, 1),
+        "site": args.site,
+        "asins": list(args.asin),
+        "bsr_asin": args.bsr_asin or list(args.asin)[0],
+        "bsr": bsr,
+        "keywords_total": len(keywords),
+        "keywords_ok": sum(1 for r in pure_results if r.get("organic_rank")),
+        "keywords_with_ad": sum(1 for r in pure_results if r.get("ad_pages")),
+        "results": kw_results,
+    }
+    if errors:
+        summary["errors"] = errors
+    if column:
+        summary["column"] = openpyxl.utils.get_column_letter(column)
+    if backup:
+        summary["backup"] = str(backup)
+    summary["excel"] = str(args.excel)
+    return summary
+
+
 def main():
     import argparse
 
@@ -385,10 +476,19 @@ def main():
                         help="数据起始列号 (默认自动检测)")
     parser.add_argument("--dry-run", action="store_true", help="只查询不写入")
     parser.add_argument("--reset", action="store_true", help="忽略断点，从头开始")
+    parser.add_argument("--json", action="store_true", help="输出结构化 JSON 运行摘要")
     parser.add_argument("--host", default=CDP_HOST, help=f"CDP 地址 (默认 {CDP_HOST})")
     parser.add_argument("--port", type=int, default=CDP_PORT)
     args = parser.parse_args()
 
+    try:
+        _run_query(args)
+    except Exception as e:
+        fatal_error("keyword_rank", e, excel=str(args.excel), site=args.site)
+
+
+def _run_query(args):
+    timer = RunTimer()
     asins = set(args.asin)
     print(f"Site: amazon.{args.site}  |  Tracking ASINs: {asins}")
 
@@ -461,12 +561,18 @@ def main():
         for i, (kw, r) in enumerate(zip(keywords, pure_results)):
             label = format_result(r.get("organic_rank"), r.get("ad_pages", []))
             print(f"  [{i+1:2d}] {kw:30s} → {label}")
+        if args.json:
+            print_json_summary(_build_summary(args, keywords, pure_results, bsr,
+                                              timer, dry_run=True))
         progress_path.unlink()
         return
 
     new_col, backup = write_results(wb, args.excel, keywords, last_date_col, pure_results, bsr)
     print(f"\n\nWritten to column {openpyxl.utils.get_column_letter(new_col)}")
     print(f"Backup: {backup}")
+    if args.json:
+        print_json_summary(_build_summary(args, keywords, pure_results, bsr,
+                                          timer, column=new_col, backup=backup))
     progress_path.unlink()  # 成功写入后清理进度文件
 
 

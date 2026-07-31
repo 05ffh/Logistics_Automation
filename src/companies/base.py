@@ -10,6 +10,7 @@ from dataclasses import dataclass
 class TrackingResult:
     tracking_no: str
     routing_info: str | None
+    error: str | None = None  # 查询出错原因 (timeout/network/auth)，区分于正常 MISS
 
 
 class CompanyAdapter(ABC):

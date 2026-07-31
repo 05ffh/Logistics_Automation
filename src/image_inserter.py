@@ -22,6 +22,11 @@ from pathlib import Path
 import openpyxl
 from openpyxl.utils import get_column_letter
 
+try:
+    from .cli_utils import fatal_error, print_json_summary, RunTimer
+except ImportError:
+    from cli_utils import fatal_error, print_json_summary, RunTimer
+
 # ── 常量 ──────────────────────────────────────────────────────────
 
 _IMAGE_COL = 2          # B 列 — 图片默认写入列（表头无"图片"时回退）
@@ -584,6 +589,7 @@ def _image_dimensions(path: Path) -> tuple[int, int]:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="ASIN 图片自动匹配")
+    parser.add_argument("--json", action="store_true", help="输出结构化 JSON 运行摘要")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_build = sub.add_parser("build", help="从映射源 Excel 构建图片库")
@@ -604,20 +610,41 @@ def main():
 
     args = parser.parse_args()
 
-    if args.cmd == "build":
-        result = build_library(args.source, args.output)
-        print(f"\nDone. {len(result)} images extracted.")
+    timer = RunTimer()
+    try:
+        if args.cmd == "build":
+            result = build_library(args.source, args.output)
+            print(f"\nDone. {len(result)} images extracted.")
+            if getattr(args, 'json', False):
+                print_json_summary({
+                    "module": "image_inserter", "mode": "build",
+                    "status": "ok", "elapsed": round(timer.elapsed, 1),
+                    "source": str(args.source), "images": len(result),
+                })
 
-    elif args.cmd == "insert":
-        asin_col = openpyxl.utils.column_index_from_string(args.asin_col) if args.asin_col else None
-        image_col = openpyxl.utils.column_index_from_string(args.image_col) if args.image_col else None
-        result = insert_images(args.target, args.library,
-                               asin_col=asin_col, image_col=image_col,
-                               sheet_names=args.sheet)
-        print(f"\nDone. Updated: {result['updated']}, "
-              f"Missing (ASIN not in library): {result['missing']}, "
-              f"Skipped (empty ASIN): {result['skipped']}")
-        print(f"Backup: {result['backup']}")
+        elif args.cmd == "insert":
+            asin_col = openpyxl.utils.column_index_from_string(args.asin_col) if args.asin_col else None
+            image_col = openpyxl.utils.column_index_from_string(args.image_col) if args.image_col else None
+            result = insert_images(args.target, args.library,
+                                   asin_col=asin_col, image_col=image_col,
+                                   sheet_names=args.sheet)
+            print(f"\nDone. Updated: {result['updated']}, "
+                  f"Missing (ASIN not in library): {result['missing']}, "
+                  f"Skipped (empty ASIN): {result['skipped']}")
+            print(f"Backup: {result['backup']}")
+            if getattr(args, 'json', False):
+                print_json_summary({
+                    "module": "image_inserter", "mode": "insert",
+                    "status": "ok", "elapsed": round(timer.elapsed, 1),
+                    "target": str(args.target),
+                    "updated": result["updated"],
+                    "missing": result["missing"],
+                    "skipped": result["skipped"],
+                    "backup": result["backup"],
+                })
+    except Exception as e:
+        fatal_error("image_inserter", e, cmd=args.cmd,
+                     target=getattr(args, 'target', getattr(args, 'source', '')))
 
 
 if __name__ == "__main__":

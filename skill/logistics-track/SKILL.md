@@ -2,7 +2,7 @@
 name: logistics-track
 description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配、格式迁移、跨表数据填写、Amazon关键词排名查询(刮水器/猫砂垫/反光衣)
 type: skill
-platform: windows
+platform: windows,linux
 ---
 
 # 物流轨迹查询 Skill（多公司版）
@@ -20,13 +20,15 @@ platform: windows
 
 ## 首次使用（同事拿到 Skill 后只需做一次）
 
-1. 双击 `bin/物流网站一键启动.bat` → Edge 打开物流网站（CDP 端口 9222）
+1. 双击 `bin/物流网站一键启动-Chrome.bat`（或 `bin/物流网站一键启动.bat`）→ Chrome 打开物流网站（CDP 端口 9222）
 2. 宁致（nzhexp）首次需手动登录（账号密码见团队内部文档，登录后 Cookie 持久化无需重复登录）
 3. 云驼（17track）无需登录
 4. 小满（xmsdwl）无需登录
-5. 登录后关闭 Edge，再双击 `.bat` 确认登录态保持 → 完成
+5. 登录后关闭 Chrome，再双击 `.bat` 确认登录态保持 → 完成
 
-之后每次使用：双击 `.bat` → 告诉 OpenClaw 要查哪个 Excel。
+之后每次使用：双击 `.bat` → 告诉 Claude 要查哪个 Excel。
+
+Edge 版本保留（`物流网站一键启动.bat`），Chrome 版本（`物流网站一键启动-Chrome.bat`）推荐使用。
 
 ## 每次使用流程
 
@@ -34,14 +36,14 @@ platform: windows
 你说: "帮我查桌面上测试（云驼、宁致）的物流轨迹"
     ↓
 Skill 自动:
-  1. 检查 Edge 9222 是否就绪
+  1. 检查 Chrome/Edge 9222 是否就绪
   2. 自检各站点是否可查询 (--healthcheck)
   3. 读 Excel → 按单号前缀归属公司（不依赖发货公司列）→ 解析合并单元格
   4. 报告: "找到 宁致12行/11个单号, 云驼71行/81个单号, 确认开始？"
   5. 逐公司查询 → 宁致/小满 fetch API(~0.2s/单号)、云驼 DOM 逐单 + 单条回退
-  6. 按公司分别写回"物流轨迹N"列(N=公司在S列首次出现次序)
-  7. 缺失单号记录到 _misses.json，方便后续精准补跑
-  8. 自动备份 Excel → 显示运行汇总(每家成功率)
+  6. 按公司分别写回"物流轨迹N"列(N=公司在S列首次出现次序)；写入前自动备份，空结果拒绝写入保护存量
+  7. 缺失单号记录到 _misses.json（含 error 字段区分 MISS/ERROR），方便后续精准补跑
+  8. 显示运行汇总 + --json 结构化摘要（成功率/各公司统计/耗时/误差详情）
 ```
 
 ## 多公司说明
@@ -60,28 +62,32 @@ Skill 自动:
 
 ```bash
 # 物流轨迹查询
-python -m src.main <excel_path> [sheet_names]
+python -m src.main <excel_path> [sheet_names] [--json] [--keepalive]
 python -m src.main <excel_path> --company 小满,宁致
-python -m src.main --healthcheck
-python -m src.main <excel_path> --retry-stubborn
+python -m src.main --healthcheck [--json]
+python -m src.main <excel_path> --retry-stubborn [--json]
 
 # 数据录入
-python -m src.data_entry <excel_path>
+python -m src.data_entry <excel_path> [--json]
 
 # ASIN 图片匹配
 python -m src.image_inserter build <ASIN映射Excel>
-python -m src.image_inserter insert <目标Excel>
+python -m src.image_inserter insert <目标Excel> [--json]
 
 # 旧格式迁移
-python -m src.migrate <旧格式Excel> -o <输出路径>
+python -m src.migrate <旧格式Excel> -o <输出路径> [--json]
 
 # 跨表数据填写
-python -m src.cross_table <统计表> <发货表...>
+python -m src.cross_table <统计表> <发货表...> [--json]
 
-# 关键词排名查询
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...   # 刮水器 DE
-python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P        # 猫砂垫 FR
-python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ ...    # 反光衣 FR
+# 关键词排名查询 (首页使用搜索框输入，模拟人工搜索保证广告布局一致)
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]   # 刮水器 DE
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P [--json]        # 猫砂垫 FR
+python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ ... [--json]    # 反光衣 FR
+
+# 标签页保活 (防 session 过期)
+python -m src.keepalive --status      # 查看 CDP 状态
+python -m src.keepalive --daemon      # 后台持续保活
 ```
 
 | 参数 | 说明 |
@@ -91,8 +97,10 @@ python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ ...    # 反光�
 | `--company 小满,宁致` | 只查指定公司，逗号分隔（可选，默认全查） |
 | `--healthcheck` | 金丝雀自检，用已知单号验证各站点结构是否还通 |
 | `--retry-stubborn` | 只查 miss_count>=2 的顽固单号，不全量跑 |
+| `--json` | 输出结构化 JSON 运行摘要（适用于所有模块），方便 agent 自动解析 |
+| `--keepalive` | 后台守护线程定期刷新标签页，防止长时间运行时 session 过期 |
 
-环境变量: `CDP_HOST`，默认 `localhost:9222`
+环境变量: `CDP_HOST`，默认 `localhost:9222`（WSL 开发时设为 Windows 宿主 IP）
 
 ## 直接查询指定单号（不用 Excel）
 
@@ -266,7 +274,7 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 每天自动查 Amazon 搜索结果中的自然位排名 + 广告位页码 + BSR 大类排名。
 
-**安全策略**：只用 `evaluate()` 读 DOM，绝不 `click()`；翻页只用 `window.location.href`。广告识别分两路：卡片子树搜索 Sponsored 文字（覆盖商品/视频广告）+ 卡片祖先检测 Brand 容器（覆盖品牌横幅广告），零误判零跨卡污染。
+**安全策略**：只用 `evaluate()` 读 DOM，绝不 `click()`。首页使用搜索框输入提交模拟人工搜索（保证广告布局与正常浏览一致），翻页用 `window.location.href`。广告识别分两路：卡片子树搜索 Sponsored 文字（覆盖商品/视频广告）+ 卡片祖先检测 Brand 容器（覆盖品牌横幅广告），零误判零跨卡污染。
 
 **站点支持**：Amazon DE (`--site de`) / Amazon FR (`--site fr`)，`.bat` 文件中需包含对应站点标签页。
 

@@ -16,6 +16,11 @@ from pathlib import Path
 
 import openpyxl
 
+try:
+    from .cli_utils import fatal_error, print_json_summary, RunTimer
+except ImportError:
+    from cli_utils import fatal_error, print_json_summary, RunTimer
+
 SHIPPING_HEADER_ROW = 2        # 发货信息表表头行
 STATS_HEADER_ROW = 1           # 统计表标签行
 STATS_DATA_START = 2           # 统计表数据起始行
@@ -172,7 +177,8 @@ def _apply_updates(stats_path: Path, shipments: list[dict]) -> dict:
                 f"  ASIN={asin} 在采={old_zc} → {new_zc} (扣减{qty}, 发货表 {s['src_sheet']} Row{s['src_row']})"
             )
 
-    wb.save(stats_path)
+    if updated > 0:
+        wb.save(stats_path)
     wb.close()
 
     if missing:
@@ -253,8 +259,22 @@ def main():
     p = argparse.ArgumentParser(description="跨表数据填写：根据发货信息表更新统计表的在采/在途数量")
     p.add_argument("stats", help="统计表路径 (被更新的目标文件)")
     p.add_argument("shipping", nargs="+", help="发货信息表路径 (可多个, 数据来源只读)")
+    p.add_argument("--json", action="store_true", help="输出结构化 JSON 运行摘要")
     args = p.parse_args()
-    cross_update(args.stats, *args.shipping)
+    timer = RunTimer()
+    try:
+        result = cross_update(args.stats, *args.shipping)
+        if args.json:
+            print_json_summary({
+                "module": "cross_table", "status": "ok",
+                "elapsed": round(timer.elapsed, 1),
+                "stats": str(args.stats),
+                "shipping": [str(s) for s in args.shipping],
+                **result,
+            })
+    except Exception as e:
+        fatal_error("cross_table", e, stats=str(args.stats),
+                     shipping=",".join(args.shipping))
 
 
 if __name__ == "__main__":

@@ -42,14 +42,17 @@ python -m src.keyword_rank <Excel路径> --site fr --asin B0GCDF56DJ B0GCF4T6NM 
 
 ```
 同事的 Windows 电脑:
-├── .bat (启动 Edge + CDP 9222 + 物流网站标签页)
-└── OpenClaw + logistics-track Skill
+├── .bat (启动 Chrome + CDP 9222 + 物流网站标签页)
+└── logistics-track Skill
     ├── 读 Excel → 按表头自动匹配列位 → 按前缀归属公司
     ├── CDP → localhost:9222 → 逐公司查询
     │   宁致/小满: fetch API 调内部 JSON 接口 (~0.2s/单号)
     │   云驼: DOM 逐单查询 + 单条回退选运输商
     └── 按 track_position 写回对应物流轨迹N列
 ```
+
+所有模块统一 CLI 规范：`--json` 输出结构化运行摘要，顶层异常输出 JSON 到 stderr。
+`--keepalive` 启动后台守护线程防 session 过期。
 
 ## 查询策略
 
@@ -88,23 +91,27 @@ fetch API 策略借鉴象往项目：fetch 在浏览器内执行，携带完整 
 ```
 Logistics_Automation/
 ├── bin/
-│   └── 物流网站一键启动.bat
+│   ├── 物流网站一键启动.bat        # Edge 版
+│   └── 物流网站一键启动-Chrome.bat # Chrome 版 (推荐)
 ├── images/
 │   └── products/             # ASIN 图片库
 ├── src/
 │   ├── cdp_client.py        # CDP WebSocket + fetch_api()
 │   ├── cdp_util.py           # CDP 工具函数 (val)
+│   ├── cli_utils.py          # CLI 公共: fatal_error / print_json_summary / RunTimer
+│   ├── keepalive.py          # 标签页刷新保活守护 TabKeepAlive
 │   ├── cross_table.py       # 跨表数据填写 — 发货表→统计表 在采/在途更新
 │   ├── data_entry.py         # 半结构化物流文本解析 + 自动填入 Excel
 │   ├── excel_reader.py       # 读取 + 表头自动匹配 + 前缀归属
-│   ├── excel_writer.py       # 按公司写物流轨迹N列 + 备份
+│   ├── excel_writer.py       # 按公司写物流轨迹N列 + 备份 + 空结果守卫
 │   ├── image_inserter.py     # ASIN 图片库构建 + 自动嵌入图片
 │   ├── migrate.py            # 旧格式 → 新规范列位迁移
 │   ├── validation.py         # 轨迹数据校验 is_valid_routing
 │   ├── miss_tracker.py       # 缺失单号追踪 + 顽固补跑
 │   ├── main.py               # 主流程编排 + healthcheck + retry-stubborn
 │   └── companies/
-│       ├── base.py           # CompanyAdapter 抽象基类
+│       ├── base.py           # CompanyAdapter 抽象基类 + TrackingResult
+│       ├── fetch_adapter.py  # FetchApiAdapter — 宁致/小满共用基类
 │       ├── ningzhi.py        # 宁致 NZ → fetch API
 │       ├── yuntuo.py         # 云驼 999 → DOM 逐单
 │       └── xiaoman.py        # 小满 XM → fetch API
@@ -116,40 +123,46 @@ Logistics_Automation/
 
 ```bash
 # 物流轨迹查询
-python -m src.main <excel_path> [sheet_names]
+python -m src.main <excel_path> [sheet_names] [--json] [--keepalive]
 python -m src.main <excel_path> --company 小满,宁致
-python -m src.main --healthcheck
-python -m src.main <excel_path> --retry-stubborn
+python -m src.main --healthcheck [--json]
+python -m src.main <excel_path> --retry-stubborn [--json]
 
 # 数据录入
-python -m src.data_entry <excel_path>
+python -m src.data_entry <excel_path> [--json]
 
 # ASIN 图片匹配
 python -m src.image_inserter build <ASIN映射Excel>
-python -m src.image_inserter insert <目标Excel>
+python -m src.image_inserter insert <目标Excel> [--json]
 
 # 旧格式迁移
-python -m src.migrate <旧格式Excel> -o <输出路径>
+python -m src.migrate <旧格式Excel> -o <输出路径> [--json]
 
 # 跨表数据填写
-python -m src.cross_table <统计表> <发货表...>
+python -m src.cross_table <统计表> <发货表...> [--json]
 
-# 关键词排名查询
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...  # 刮水器
-python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P      # 猫砂垫
+# 关键词排名查询 (首页搜索框输入模拟人工搜索)
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]  # 刮水器
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P [--json]      # 猫砂垫
 python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P --dry-run
+
+# 标签页保活
+python -m src.keepalive --status      # CDP 状态
+python -m src.keepalive --daemon      # 后台持续保活
 ```
 
 ## 平台差异
 
 | | WSL (开发) | Windows (生产) |
 |---|---|---|
-| CDP 地址 | `172.28.190.60:9222` | `localhost:9222` |
+| 浏览器 | Chrome (CDP 9222) | Chrome (推荐) / Edge |
+| CDP 地址 | Windows 宿主 IP `172.xx.xx.xx:9222`（需设 `CDP_HOST`） | `localhost:9222` |
 | Excel 路径 | `/mnt/c/Users/.../` | `C:\Users\...\` |
 | Python 命令 | `python3` | `python` |
 | 编码 | UTF-8 (原生) | GBK → stdout 强制 UTF-8 |
 
 `CDP_HOST` 环境变量控制 CDP 地址，默认 `localhost:9222`。
+WSL 开发时需指向 Windows 宿主 IP（如 `export CDP_HOST=172.28.190.60:9222`）。
 
 ## 稳健性设计
 

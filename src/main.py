@@ -16,6 +16,11 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from .cli_utils import fatal_error, RunTimer, print_json_summary
+except ImportError:
+    from cli_utils import fatal_error, RunTimer, print_json_summary
+
 # Windows 终端默认 GBK → 强制 stdout 使用 UTF-8，避免 print 中文时
 # UnicodeEncodeError 崩溃。errors="replace" 兜底: 万一终端不认 UTF-8，
 # 不可编码字符用 ? 替代而非抛异常（老 cmd.exe 可能仍乱码但不崩）。
@@ -59,6 +64,13 @@ ANOMALY_MIN_RATE = 0.5
 
 
 def main():
+    try:
+        _main_impl()
+    except Exception as e:
+        fatal_error("main", e, cdp_host=os.environ.get("CDP_HOST", "localhost:9222"))
+
+
+def _main_impl():
     retry_stubborn = False
     target_companies: set[str] | None = None
 
@@ -84,15 +96,17 @@ def main():
             continue
         args.append(a)
 
+    json_output = "--json" in sys.argv
+    keepalive = "--keepalive" in sys.argv
     if "--retry-stubborn" in sys.argv:
         retry_stubborn = True
     if "--healthcheck" in sys.argv:
         args.insert(0, "--healthcheck")
 
     if not args:
-        print("Usage: python -m src.main <excel_path> [sheet_names] [--company 小满,宁致]")
-        print("       python -m src.main <excel_path> --retry-stubborn")
-        print("       python -m src.main --healthcheck")
+        print("Usage: python -m src.main <excel_path> [sheet_names] [--company 小满,宁致] [--json]")
+        print("       python -m src.main <excel_path> --retry-stubborn [--json]")
+        print("       python -m src.main --healthcheck [--json]")
         available = ", ".join(a.name for a in ADAPTERS)
         print(f"Available companies: {available}")
         sys.exit(1)
@@ -121,9 +135,18 @@ def main():
         except Exception:
             print("ERROR: Cannot reach Edge CDP. Is Edge running with --remote-debugging-port=9222?")
             sys.exit(1)
+        timer = RunTimer()
         ok = run_healthcheck(cdp, adapters)
+        if json_output:
+            print_json_summary({
+                "module": "main", "mode": "healthcheck",
+                "status": "ok" if ok else "fail",
+                "elapsed": round(timer.elapsed, 1),
+            })
         cdp.close()
         sys.exit(0 if ok else 1)
+
+    timer = RunTimer()
 
     excel_path = Path(args[0])
     if not excel_path.exists():
@@ -136,7 +159,14 @@ def main():
 
     # 顽固补跑模式
     if retry_stubborn:
+        timer = RunTimer()
         run_retry_stubborn(excel_path, cdp, adapters)
+        if json_output:
+            print_json_summary({
+                "module": "main", "mode": "retry_stubborn",
+                "elapsed": round(timer.elapsed, 1),
+                "excel": str(excel_path),
+            })
         cdp.close()
         return
 
@@ -167,6 +197,16 @@ def main():
         by_company.setdefault(r["company"], []).append(r)
 
     adapter_map = {a.name: a for a in adapters}
+
+    # 可选：标签页保活守护（长时间运行时防 session 过期）
+    keeper = None
+    if keepalive:
+        try:
+            from .keepalive import TabKeepAlive
+        except ImportError:
+            from keepalive import TabKeepAlive
+        keeper = TabKeepAlive.start(host=host, port=port)
+        print("TabKeepAlive daemon started (background).")
 
     # 3. 逐公司查询
     all_results: dict[str, dict[str, str | None]] = {}  # {company: {tn: routing}}
@@ -200,6 +240,7 @@ def main():
         print(f"Found {len(rows)} rows, {len(tns)} unique {adapter.prefix}* numbers.")
         results = adapter.query(cdp, tns)
         res_map = {r.tracking_no: r.routing_info for r in results}
+        err_count = sum(1 for r in results if r.error)
         all_results[company_name] = res_map
 
         # 异常检测：成功率过低 → 疑似页面结构变化/登录失效
@@ -207,6 +248,7 @@ def main():
         ok = sum(1 for v in res_map.values() if v)
         suspect = total >= ANOMALY_MIN_COUNT and (ok / total) < ANOMALY_MIN_RATE
         company_stats[company_name] = {"total": total, "ok": ok,
+                                       "errors": err_count,
                                        "suspect": suspect, "reason": "成功率异常"}
         if suspect:
             print(f"\n⚠️  WARNING: {company_name} 成功率异常 ({ok}/{total})，"
@@ -302,6 +344,30 @@ def main():
         print(f"\n⚠️ 有公司疑似异常({', '.join(suspect_companies)})，"
               f"已跳过写入保护存量数据，请人工核查页面/登录后重试。")
 
+    # --json: 输出结构化运行摘要
+    if json_output:
+        print_json_summary({
+            "module": "main", "mode": "tracking",
+            "status": "locked" if write_summary.get("locked") else
+                      "partial" if suspect_companies else "ok",
+            "elapsed": round(timer.elapsed, 1),
+            "excel": str(excel_path),
+            "backup": write_summary.get("backup"),
+            "companies": {
+                c: {"total": s["total"], "ok": s["ok"],
+                    "errors": s.get("errors", 0),
+                    "rate": round(s["ok"] / s["total"], 3) if s["total"] else 0,
+                    "suspect": s.get("suspect", False)}
+                for c, s in company_stats.items()
+            },
+            "routing": {"updated": updated_count, "preserved": preserved_count},
+            "write": {"updated": write_summary.get("updated", 0),
+                       "errors": write_summary.get("errors", 0)},
+            "misses": {"new": added, "resolved": removed},
+        })
+
+    if keeper:
+        keeper.stop()
     cdp.close()
 
 

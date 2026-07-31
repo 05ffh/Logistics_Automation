@@ -36,6 +36,7 @@ class YunTuoAdapter(CompanyAdapter):
 
     def query(self, cdp, tracking_nos: list[str]) -> list[TrackingResult]:
         results: dict[str, str | None] = {}
+        errors: dict[str, str | None] = {}
         total = len(tracking_nos)
 
         for i, tn in enumerate(tracking_nos):
@@ -43,14 +44,19 @@ class YunTuoAdapter(CompanyAdapter):
                 interval = random.uniform(QUERY_INTERVAL_MIN, QUERY_INTERVAL_MAX)
                 time.sleep(interval)
 
-            routing = self._query_one(cdp, tn)
+            routing, error = self._query_one(cdp, tn)
             results[tn] = routing
-            status = "OK" if routing else "MISS"
-            print(f"  [{self.name}] {i+1}/{total} {tn} {status}")
+            errors[tn] = error
+            if error:
+                print(f"  [{self.name}] {i+1}/{total} {tn} ERROR: {error}")
+            else:
+                status = "OK" if routing else "MISS"
+                print(f"  [{self.name}] {i+1}/{total} {tn} {status}")
 
         ok = sum(1 for tn in tracking_nos if results.get(tn))
         print(f"  [{self.name}] 合计 {ok}/{total} OK")
-        return [TrackingResult(tn, results.get(tn)) for tn in tracking_nos]
+        return [TrackingResult(tn, results.get(tn), error=errors.get(tn))
+                for tn in tracking_nos]
 
     # ── 批量查询 ──────────────────────────────────────────────
 
@@ -144,7 +150,7 @@ class YunTuoAdapter(CompanyAdapter):
                 return t.get("webSocketDebuggerUrl", "")
         raise RuntimeError("Cannot open 17track tab.")
 
-    def _query_one(self, cdp, tracking_no: str) -> str | None:
+    def _query_one(self, cdp, tracking_no: str) -> tuple[str | None, str | None]:
         # 0. 确保在结果页壳（提供可复用的 textarea + 查询按钮）
         url = _val(cdp.evaluate("location.href"), "")
         if "t.17track.net" not in url:
@@ -153,37 +159,40 @@ class YunTuoAdapter(CompanyAdapter):
 
         # 1. 填入单号
         if not self._fill_number(cdp, tracking_no):
-            return None
+            return None, "fill_number: textarea not found"
         time.sleep(0.6)
 
         # 2. 点查询
         if not self._click_search(cdp):
-            return None
+            return None, "click_search: button not found"
 
         # 3. 轮询等待新结果加载（时间线出现 或 弹出运输商候选），避免时序竞态
         state = self._wait_result(cdp, timeout=12)
+        if state == "timeout":
+            return None, "wait_result: timeout (no timeline or carrier selector appeared)"
         # 页面可能处于 mid-load 状态（loading 提示出现但内容未就绪），等它安定
         if not self._page_stable(cdp, tracking_no, timeout=5):
-            return None
+            return None, "page_stable: loading or target not found in body"
 
         # 4. 自动识别成功 → 直接提取
         routing = self._extract_routing(cdp, tracking_no)
         if routing:
-            return routing
+            return routing, None
 
         # 5. 需手动选运输商 → 点"愿景征途"
         if state == "carrier":
-            self._select_carrier(cdp)
+            if not self._select_carrier(cdp):
+                return None, "carrier selector appeared but 愿景征途 not found"
             self._wait_result(cdp, timeout=8, want="timeline")
             time.sleep(1)
-            return self._extract_routing(cdp, tracking_no)
+            return self._extract_routing(cdp, tracking_no), None
 
         if self._select_carrier(cdp):
             self._wait_result(cdp, timeout=8, want="timeline")
             time.sleep(1)
-            return self._extract_routing(cdp, tracking_no)
+            return self._extract_routing(cdp, tracking_no), None
 
-        return None
+        return None, None  # genuine MISS: carrier not needed but no results
 
     # ── 步骤实现 ──────────────────────────────────────────────
 
