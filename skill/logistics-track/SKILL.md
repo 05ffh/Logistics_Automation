@@ -274,7 +274,7 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 每天自动查 Amazon 搜索结果中的自然位排名 + 广告位页码 + BSR 大类排名。
 
-**安全策略**：只用 `evaluate()` 读 DOM，绝不 `click()`。首页使用搜索框输入提交模拟人工搜索（保证广告布局与正常浏览一致），翻页用 `window.location.href`。广告识别分两路：卡片子树搜索 Sponsored 文字（覆盖商品/视频广告）+ 卡片祖先检测 Brand 容器（覆盖品牌横幅广告），零误判零跨卡污染。
+**交互策略**：鼠标驱动搜索（Input.dispatchMouseEvent，ease-out 轨迹 + 微抖动模拟真人）。首页→点击搜索框→输入→点击搜索按钮，翻页→鼠标点击 .s-pagination-next。Amazon 广告布局与人工搜索一致。广告识别分两路：卡片子树搜索 Sponsored 文字（覆盖商品/视频广告）+ 卡片祖先检测 Brand 容器（覆盖品牌横幅广告），零误判零跨卡污染。
 
 **站点支持**：Amazon DE (`--site de`) / Amazon FR (`--site fr`)，`.bat` 文件中需包含对应站点标签页。
 

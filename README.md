@@ -11,7 +11,7 @@
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert [--json]` | ASIN → 图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate <旧表> [--json]` | 旧规范 → 新规范列位映射 |
 | 跨表填写 | `python -m src.cross_table <统计表> <发货表...> [--json]` | ASIN 关联，扣在采/加在途 |
-| 关键词排名 | `python -m src.keyword_rank <excel> --site de/fr --asin ... [--json]` | CDP 查 Amazon 搜索排名 + BSR |
+| 关键词排名 | `python -m src.keyword_rank <excel> --site de/fr --asin ... [--json]` | 鼠标驱动 CDP 搜索(点击+翻页)，模拟真人操作 |
 | 标签页保活 | `python -m src.keepalive --status/--daemon` | 后台守护防 session 过期 |
 
 ## 使用
@@ -34,9 +34,10 @@ python -m src.migrate <旧表> -o <输出路径>
 # 跨表填写 (支持多个发货表)
 python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
-# 关键词排名 (首页搜索框输入，模拟人工搜索保证广告布局一致)
-python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P      # 猫砂垫
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...  # 刮水器
+# 关键词排名 (鼠标驱动: 搜索框点击+翻页点击，ease-out轨迹模拟真人)
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P                        # 猫砂垫
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...                    # 刮水器
+python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS  # 反光衣
 
 # 标签页保活
 python -m src.keepalive --status   # 查看 CDP 状态
