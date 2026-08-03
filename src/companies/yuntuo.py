@@ -39,6 +39,10 @@ class YunTuoAdapter(CompanyAdapter):
         errors: dict[str, str | None] = {}
         total = len(tracking_nos)
 
+        # 一次性检测 17track 是否进入严重限流状态
+        if self._detect_rate_limit(cdp):
+            print(f"  [{self.name}] WARNING: USPS rate limit banner present — may affect auto-detection")
+
         for i, tn in enumerate(tracking_nos):
             if i > 0:
                 interval = random.uniform(QUERY_INTERVAL_MIN, QUERY_INTERVAL_MAX)
@@ -162,7 +166,7 @@ class YunTuoAdapter(CompanyAdapter):
             return None, "fill_number: textarea not found"
         time.sleep(0.6)
 
-        # 2. 点查询
+        # 2. 点查询（原生 CDP 鼠标点击）
         if not self._click_search(cdp):
             return None, "click_search: button not found"
 
@@ -217,15 +221,18 @@ class YunTuoAdapter(CompanyAdapter):
         return _val(r) == "ok"
 
     def _click_search(self, cdp) -> bool:
-        """点击"查询(N)"按钮（结果页），回退到主页搜索区域。"""
+        """点击\"查询(N)\"按钮（原生 CDP 鼠标事件，确保 React 响应）。"""
+        # 主路径: CDP 原生鼠标点击
+        result = cdp.click_button_by_text("查询(")
+        if result.get("ok"):
+            return True
+        # 回退: JS click (兼容旧版或异常 DOM)
         r = cdp.evaluate(
             "(function(){"
             "var btns=document.querySelectorAll('button');"
             "for(var i=0;i<btns.length;i++){"
             "var t=(btns[i].textContent||'').trim();"
             "if(t.indexOf('查询(')===0){btns[i].click();return 'result';}}"
-            "var a=document.querySelector('[class*=batch_track_search-area]');"
-            "if(a){a.click();return 'main';}"
             "return 'no';"
             "})()"
         )
@@ -280,6 +287,16 @@ class YunTuoAdapter(CompanyAdapter):
                 return True
             time.sleep(0.4)
         return False
+
+    def _detect_rate_limit(self, cdp) -> bool:
+        """检测 17track 是否对当前 IP 限流。"""
+        r = cdp.evaluate(
+            "(function(){"
+            "var b=document.body.innerText||'';"
+            "return b.indexOf('查询请求受到限制')>=0||b.indexOf('请求受到限制')>=0;"
+            "})()"
+        )
+        return bool(_val(r, False))
 
     def _select_carrier(self, cdp) -> bool:
         """在运输商候选中点击含"愿景征途"的 LI 行。"""

@@ -160,6 +160,33 @@ class CdpClient:
         self.click_at(pos["x"], pos["y"], human_like=True)
         return {"ok": True, "x": pos["x"], "y": pos["y"]}
 
+    def click_button_by_text(self, prefix: str) -> dict:
+        """点击第一个文本以 prefix 开头的 button 元素（如 '查询('）。
+
+        使用原生 CDP 鼠标事件（非 JS click），确保 React 组件正确响应。
+        """
+        js = (
+            "(function(){"
+            "var btns=document.querySelectorAll('button');"
+            f"for(var i=0;i<btns.length;i++){{var t=(btns[i].textContent||'').trim();if(t.indexOf('{prefix}')===0){{"
+            "btns[i].scrollIntoView({block:'center',behavior:'instant'});"
+            "var r=btns[i].getBoundingClientRect();"
+            "return JSON.stringify({found:true,x:Math.round(r.left+r.width/2),"
+            "y:Math.round(r.top+r.height/2)});}}}}"
+            "return JSON.stringify({found:false});"
+            "})()"
+        )
+        import json as _json
+        result = self.evaluate(js)
+        value = result.get("result", {}).get("result", {}).get("value")
+        if not value:
+            return {"ok": False, "error": "no value"}
+        pos = _json.loads(value)
+        if not pos.get("found"):
+            return {"ok": False, "error": f"no button with prefix '{prefix}'"}
+        self.click_at(pos["x"], pos["y"], human_like=True)
+        return {"ok": True, "x": pos["x"], "y": pos["y"]}
+
     def fetch_api(self, api_url: str, timeout: float = 15.0) -> dict:
         """在浏览器内通过 fetch() 调用 API，自动携带 Cookie/会话。
 
