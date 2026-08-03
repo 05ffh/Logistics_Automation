@@ -11,7 +11,7 @@
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert [--json]` | ASIN → 图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate <旧表> [--json]` | 旧规范 → 新规范列位映射 |
 | 跨表填写 | `python -m src.cross_table <统计表> <发货表...> [--json]` | ASIN 关联，扣在采/加在途 |
-| 关键词排名 | `python -m src.keyword_rank <excel> --site de/fr --asin ... [--json]` | 鼠标驱动 CDP 搜索(点击+翻页)，模拟真人操作 |
+| 关键词排名 | `python -m src.keyword_rank <excel> --site de/fr --asin ... [--json]` | 鼠标驱动 CDP 搜索(点击+翻页)，模拟真人操作。BSR多语言自动提取，CDP Chrome需养号 |
 | 标签页保活 | `python -m src.keepalive --status/--daemon` | 后台守护防 session 过期 |
 
 ## 使用

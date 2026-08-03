@@ -99,19 +99,48 @@ _EXTRACT_JS = """
 })()
 """
 
+_BSR_EXPAND_JS = """
+(() => {
+    const btns = document.querySelectorAll('[aria-expanded="false"]');
+    for (const b of btns) { b.click(); }
+    return btns.length;
+})()
+"""
+
 _BSR_JS = """
 (() => {
-    const rows = document.querySelectorAll('tr');
     const ranks = [];
-    for (const row of rows) {
-        if (row.outerHTML.includes('Best Sellers Rank')) {
-            const items = row.querySelectorAll('li');
-            for (const item of items) {
-                const m = item.textContent.trim().match(/([\\d,]+)\\s+in\\s+(.+)/);
-                if (m) ranks.push({rank: m[1].replace(/,/g, ''), category: m[2]});
-            }
-        }
+    const body = document.body.innerText;
+
+    // Multi-language BSR section headers
+    const headers = [
+        'Best Sellers Rank',
+        'Classement des meilleures ventes',
+        'Amazon Bestseller-Rang',
+    ];
+
+    let start = -1;
+    for (const h of headers) {
+        start = body.indexOf(h);
+        if (start >= 0) break;
     }
+    if (start < 0) return JSON.stringify({ranks});
+
+    // Extract ~600 chars after the header, strip parentheticals first
+    // to avoid matching "Top 100" / "Voir les 100 premiers" references.
+    const section = body.substring(start, start + 600).replace(/\\([^)]*\\)/g, '');
+
+    // DE: "Nr. 1.310 in Küche, Haushalt & Wohnen"
+    // FR: "3 133 en Animalerie"
+    // EN: "#1,234 in Category"
+    // Separators: dot (DE), comma (EN), thin/nbspace (FR), regular space
+    const rankRe = /(\\d+(?:[\\s.,  ]\\d+)*)\\s+(en|in)\\s+(.+?)(?=\\s*$|\\s*\\n)/gm;
+    let m;
+    while ((m = rankRe.exec(section)) !== null) {
+        const rank = m[1].replace(/[\\s.,  ]/g, '');
+        ranks.push({rank, category: m[3].trim()});
+    }
+
     return JSON.stringify({ranks});
 })()
 """
@@ -299,6 +328,10 @@ class KeywordRankChecker:
                 self._ensure_tab()
                 self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/dp/{self.bsr_asin}")
                 self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
+
+                # 展开折叠区域（DE/FR 的 BSR 默认折叠）
+                self._safe_evaluate(_BSR_EXPAND_JS)
+                time.sleep(1.0)
 
                 raw = self._safe_evaluate(_BSR_JS)
                 ranks = json.loads(raw["result"]["result"]["value"])["ranks"]

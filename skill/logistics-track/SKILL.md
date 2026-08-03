@@ -276,6 +276,8 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 **交互策略**：鼠标驱动搜索（Input.dispatchMouseEvent，ease-out 轨迹 + 微抖动模拟真人）。首页→点击搜索框→输入→点击搜索按钮，翻页→鼠标点击 .s-pagination-next。Amazon 广告布局与人工搜索一致。广告识别分两路：卡片子树搜索 Sponsored 文字（覆盖商品/视频广告）+ 卡片祖先检测 Brand 容器（覆盖品牌横幅广告），零误判零跨卡污染。
 
+**CDP Chrome 养号**：CDP Chrome 使用独立空白 Profile（`--user-data-dir`），无浏览历史/Cookie 时 Amazon 不投放广告或广告布局异常。首次使用需在 CDP Chrome 中**登录 Amazon 账号**并浏览几分钟（搜索、浏览商品详情页、加购），正常关闭 Chrome 后 Cookie 持久化，后续查询广告布局才与人工搜索一致。
+
 **站点支持**：Amazon DE (`--site de`) / Amazon FR (`--site fr`)，`.bat` 文件中需包含对应站点标签页。
 
 ### 产品配置
@@ -295,7 +297,8 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 - 进度条 + 断点恢复（`.progress.json`）
 - 模拟人工浏览节奏（随机延迟、分段滚动）
 - WebSocket 断线自动重连
-- BSR 自动检测数据起始列
+- BSR 自动检测数据起始列 + 多语言提取（FR/DE/EN）+ 自动展开折叠区域
+- CDP Chrome 需养号（登录 Amazon + 浏览 + 加购），否则无 Cookie 会导致广告不展示
 - `--dry-run` 干跑验证
 - `--reset` 忽略断点重新开始
 - `--ad-asin` 指定广告位追踪 ASIN（默认追踪全部 `--asin`）

@@ -15,7 +15,7 @@
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert` | ASIN→图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate` | 旧规范 Excel → 新规范列位映射 |
 | 跨表数据填写 | `python -m src.cross_table` | 发货表→统计表 ASIN 关联，扣在采/加在途 |
-| 关键词排名 | `python -m src.keyword_rank` | 鼠标驱动 CDP 搜索(搜索框点击+按钮点击+翻页点击) → 写回 Excel |
+| 关键词排名 | `python -m src.keyword_rank` | 鼠标驱动 CDP 搜索(搜索框点击+按钮点击+翻页点击) → 写回 Excel。BSR 多语言提取(FR/DE/EN)+自动展开折叠区域。CDP Chrome 需养号(登录Amazon+浏览+加购)否则无Cookie广告不展示 |
 
 ## 关键词排名产品配置
 
