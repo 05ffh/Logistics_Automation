@@ -50,7 +50,7 @@ python -m src.keepalive --daemon   # 后台保活
 |------|------|------|
 | 宁致 | NZ | fetch API |
 | 小满 | XM | fetch API |
-| 云驼 | 999 | DOM 逐单 |
+| 云驼 | 999 | DOM 逐单 + 原生鼠标点击 |
 
 ## 列位匹配
 

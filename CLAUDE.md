@@ -47,7 +47,7 @@ python -m src.keyword_rank <Excel路径> --site fr --asin B0GCDF56DJ B0GCF4T6NM 
     ├── 读 Excel → 按表头自动匹配列位 → 按前缀归属公司
     ├── CDP → localhost:9222 → 逐公司查询
     │   宁致/小满: fetch API 调内部 JSON 接口 (~0.2s/单号)
-    │   云驼: DOM 逐单查询 + 单条回退选运输商
+    │   云驼: DOM 逐单 + 原生鼠标点击查询按钮 + 单条回退选运输商
     └── 按 track_position 写回对应物流轨迹N列
 ```
 
@@ -60,7 +60,7 @@ python -m src.keyword_rank <Excel路径> --site fr --asin B0GCDF56DJ B0GCF4T6NM 
 |------|------|------|
 | 宁致 | fetch API | 浏览器内 fetch() 调 `/tracking/app?inajax=1&tracking_number=NZ...` |
 | 小满 | fetch API | 同上，调 `xmsdwl.nextsls.com` 同一端点 |
-| 云驼 | DOM 逐单 | 17track 无内部 API，保留 DOM 方式 |
+| 云驼 | DOM 逐单 + 原生鼠标点击 | 17track SPA，CDP Input.dispatchMouseEvent 触发 React 按钮 |
 
 fetch API 策略借鉴象往项目：fetch 在浏览器内执行，携带完整 Cookie/会话，
 从服务器角度看与页面自身的 AJAX 请求无法区分，零 bot 检测风险。
