@@ -96,6 +96,70 @@ class CdpClient:
             },
         })
 
+    def mouse_event(self, event_type: str, x: int, y: int,
+                    button: str = "left", click_count: int = 1,
+                    modifiers: int = 0) -> dict:
+        """通过 Input.dispatchMouseEvent 发送鼠标事件。
+
+        event_type: 'mousePressed', 'mouseReleased', 'mouseMoved'
+        button: 'left', 'middle', 'right', 'none'
+        """
+        params: dict = {
+            "type": event_type,
+            "x": x, "y": y,
+            "button": button,
+            "clickCount": click_count,
+            "modifiers": modifiers,
+        }
+        # mouseMoved 不用传 button/clickCount
+        if event_type == "mouseMoved":
+            params.pop("button", None)
+            params.pop("clickCount", None)
+        return self._send({"method": "Input.dispatchMouseEvent", "params": params})
+
+    def click_at(self, x: int, y: int, human_like: bool = True) -> dict:
+        """在 (x, y) 坐标点击。human_like=True 时先移到目标，带微抖动。"""
+        import random as _random
+        if human_like:
+            # 从随机起点移动到目标（自然轨迹微抖动）
+            cx, cy = x - 80 + _random.randint(0, 160), y - 40 + _random.randint(0, 80)
+            steps = 8 + _random.randint(0, 6)
+            for i in range(steps):
+                t = (i + 1) / steps
+                # ease-out 曲线 + 微抖动
+                mx = int(cx + (x - cx) * (1 - (1 - t) ** 3) + _random.randint(-2, 2))
+                my = int(cy + (y - cy) * (1 - (1 - t) ** 3) + _random.randint(-2, 2))
+                self.mouse_event("mouseMoved", mx, my)
+        else:
+            self.mouse_event("mouseMoved", x, y)
+        self.mouse_event("mousePressed", x, y)
+        self.mouse_event("mouseReleased", x, y)
+        return {"ok": True}
+
+    def click_element(self, selector: str) -> dict:
+        """点击匹配 CSS 选择器的第一个元素。返回元素的位置和点击结果。"""
+        # 先滚动到可见区域 + 获取位置
+        pos_js = (
+            "(function(){"
+            f"var el=document.querySelector('{selector}');"
+            "if(!el)return JSON.stringify({found:false});"
+            "el.scrollIntoView({block:'center',behavior:'instant'});"
+            "var r=el.getBoundingClientRect();"
+            "return JSON.stringify({found:true,x:Math.round(r.left+r.width/2),"
+            "y:Math.round(r.top+r.height/2),w:Math.round(r.width),h:Math.round(r.height)});"
+            "})()"
+        )
+        import json as _json
+        result = self.evaluate(pos_js)
+        value = result.get("result", {}).get("result", {}).get("value")
+        if not value:
+            return {"ok": False, "error": "selector not found", "selector": selector}
+        pos = _json.loads(value)
+        if not pos.get("found"):
+            return {"ok": False, "error": "element not found", "selector": selector}
+        self.click_at(pos["x"], pos["y"], human_like=True)
+        return {"ok": True, "x": pos["x"], "y": pos["y"]}
+
     def fetch_api(self, api_url: str, timeout: float = 15.0) -> dict:
         """在浏览器内通过 fetch() 调用 API，自动携带 Cookie/会话。
 

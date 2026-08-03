@@ -170,12 +170,16 @@ class KeywordRankChecker:
         time.sleep(lo + random.random() * (hi - lo))
 
     def _scroll_like_human(self):
-        """模拟人工浏览：分段滚动页面（同步实现，避免 async 超时）。"""
+        """模拟人工浏览：分段滚动 + 随机鼠标移动。"""
         import random
         steps = random.randint(3, 5)
         for _ in range(steps):
             y = 300 + random.randint(0, 1200)
             self._safe_evaluate(f"window.scrollTo(0, {y})")
+            # 滚动后鼠标随机移动（模拟阅读视线）
+            mx = 200 + random.randint(0, 600)
+            my = 100 + random.randint(0, 800)
+            self.cdp.mouse_event("mouseMoved", mx, my)
             time.sleep(0.3 + random.random() * 0.7)
         if random.random() > 0.4:
             self._safe_evaluate(f"window.scrollTo(0, {random.randint(0, 400)})")
@@ -198,7 +202,8 @@ class KeywordRankChecker:
             if page == 1:
                 self._search_via_box(keyword)
             else:
-                self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/s?k={quote(keyword)}&page={page}")
+                if not self._click_next_page():
+                    break  # "下一页"按钮不可达，终止翻页
             self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
             # 模拟人工浏览行为
@@ -223,44 +228,61 @@ class KeywordRankChecker:
         return {"organic_rank": best_rank, "ad_pages": sorted(ad_pages)}
 
     def _search_via_box(self, keyword: str):
-        """通过搜索框输入+提交发起搜索，模拟人工操作。
+        """通过搜索框输入+提交发起搜索，全程模拟鼠标操作。
 
-        先导航到 Amazon 首页，填入关键词，点击搜索按钮。
-        这样产生的 Referer、客户端事件等信号与人工搜索一致，
-        Amazon 广告引擎会按正常用户画像投放广告。
+        先导航到 Amazon 首页 → 鼠标点击搜索框 → 填入关键词 → 鼠标点击搜索按钮。
         """
         domain = SITE_DOMAIN[self.site]
-        url = self._safe_evaluate("window.location.href")
-        current = str(url.get("result", {}).get("result", {}).get("value", ""))
 
-        # 不在 Amazon 站点 → 先导航到首页
-        if domain not in current:
-            self._navigate(f"https://www.{domain}/")
-            self._human_delay(2.0, 3.0)
+        # 导航到首页（初始导航仍需 URL，相当于在地址栏输入）
+        self._navigate(f"https://www.{domain}/")
+        self._human_delay(2.0, 3.0)
 
-        # 填入关键词（React/Vue 兼容：原生 value setter + 事件触发）
+        import random
+
+        # 1) 鼠标点击搜索框（模拟真人先点一下获取焦点）
+        self.cdp.click_element("#twotabsearchtextbox")
+        time.sleep(0.15 + random.random() * 0.25)
+
+        # 2) 填入关键词（原生 value setter + 事件触发）
         escaped = keyword.replace("\\", "\\\\").replace("'", "\\'")
         fill_js = (
             "(function(){"
             "var sb=document.querySelector('#twotabsearchtextbox');"
             "if(!sb)return 'no-searchbox';"
-            "sb.focus();"
             "var d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');"
             f"d.set.call(sb,'{escaped}');"
             "sb.dispatchEvent(new Event('input',{bubbles:true}));"
             "sb.dispatchEvent(new Event('change',{bubbles:true}));"
-            "var btn=document.querySelector('#nav-search-submit-button');"
-            "if(btn){btn.click();return 'clicked';}"
-            "var form=sb.closest('form');"
-            "if(form){form.submit();return 'submitted';}"
-            "return 'no-submit';"
+            "return 'ok';"
             "})()"
         )
         raw = self._safe_evaluate(fill_js)
         result = str(raw.get("result", {}).get("result", {}).get("value", ""))
         if result == "no-searchbox":
-            # 回退：可能已在搜索结果页，用 URL 导航
             self._navigate(f"https://www.{domain}/s?k={quote(keyword)}")
+            return
+
+        # 3) 短暂的"打字思考"停顿
+        time.sleep(0.3 + random.random() * 0.6)
+
+        # 4) 鼠标点击搜索按钮
+        self.cdp.click_element("#nav-search-submit-button")
+
+    def _click_next_page(self) -> bool:
+        """鼠标点击"下一页"按钮。成功返回 True。"""
+        import random
+        # 先滚到底部（翻页按钮在页面底部）
+        self._safe_evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(0.4 + random.random() * 0.4)
+
+        # 尝试点击下一页链接（Amazon 的 .s-pagination-next 或 a[href*='page='] 最后一个）
+        result = self.cdp.click_element("a.s-pagination-next")
+        if result.get("ok"):
+            return True
+        # 回退：尝试找最后一个包含 page= 的链接
+        result = self.cdp.click_element(".s-pagination-container a:last-of-type")
+        return result.get("ok", False)
 
     # ── 关键词间隔 ────────────────────────────────────────────────
 

@@ -83,7 +83,7 @@ python -m src.cross_table <统计表> <发货表...> [--json]
 # 关键词排名查询 (首页使用搜索框输入，模拟人工搜索保证广告布局一致)
 python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]   # 刮水器 DE
 python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P [--json]        # 猫砂垫 FR
-python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ ... [--json]    # 反光衣 FR
+python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS [--json]    # 反光衣 FR
 
 # 标签页保活 (防 session 过期)
 python -m src.keepalive --status      # 查看 CDP 状态
