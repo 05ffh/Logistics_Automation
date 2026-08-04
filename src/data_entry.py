@@ -335,12 +335,23 @@ def parse_entry(text: str) -> dict | None:
     # 第 1 行：日期
     entry["date"] = _parse_date_line(lines[0])
 
-    # 第 2 行：公司名或店铺名（带 - 国家后缀 → 发货店铺）
+    # 第 2 行：先过标签匹配（发货公司：云驼 → company），
+    # 匹配不到再按裸值兜底（店铺 或 公司名）
     line2 = lines[1].strip()
-    if re.match(r"^[一-鿿]+-[A-Z]{2}$", line2):
-        entry["store"] = line2
-    else:
-        entry["company"] = line2
+    matched = False
+    for label, key in _LABEL_MAP_SORTED:
+        m = re.match(re.escape(label) + r"\s*[:：]", line2)
+        if m:
+            val = line2[m.end():].strip()
+            if val:
+                entry[key] = val
+            matched = True
+            break
+    if not matched:
+        if re.match(r"^[一-鿿]+-[A-Z]{2}$", line2):
+            entry["store"] = line2
+        else:
+            entry["company"] = line2
 
     # 余下行：标签键值对（长标签优先，避免子串误匹配如 渠道 ⊂ 指定发货渠道）
     for ln in lines[2:]:
@@ -886,12 +897,23 @@ def parse_de_entry(text: str) -> dict | None:
     # 第1行：日期
     entry["date"] = _parse_date_line(lines[0])
 
-    # 第2行：店铺 / 公司
+    # 第2行：先过标签匹配（发货公司：云驼 → company），
+    # 匹配不到再按裸值兜底（店铺 或 公司名）
     line2 = lines[1].strip()
-    if re.match(r"^[一-鿿]+-[A-Z]{2}$", line2):
-        entry["store"] = line2
-    else:
-        entry["company"] = line2
+    matched = False
+    for label, key in _LABEL_MAP_SORTED:
+        m = re.match(re.escape(label) + r"\s*[:：]", line2)
+        if m:
+            val = line2[m.end():].strip()
+            if val:
+                entry[key] = val
+            matched = True
+            break
+    if not matched:
+        if re.match(r"^[一-鿿]+-[A-Z]{2}$", line2):
+            entry["store"] = line2
+        else:
+            entry["company"] = line2
 
     # 品名行：品名：1、xxx-N箱  2、yyy-M箱
     prod_pattern = re.compile(r"(\d+)\s*[、,，.\-]\s*(.+)$")
