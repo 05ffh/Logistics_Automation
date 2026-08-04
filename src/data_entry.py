@@ -395,13 +395,6 @@ def parse_batch(text: str) -> list[dict]:
 
 # ── 格式化 ──────────────────────────────────────────────────────
 
-def _fmt_ship_date(text: str) -> str:
-    """'7-23号左右' → '7月23日'"""
-    text = text.strip()
-    m = re.match(r"(\d{1,2})\s*[-–]\s*(\d{1,2})", text)
-    if m:
-        return f"{int(m.group(1))}月{int(m.group(2))}日"
-    return text
 
 
 def _fmt_delivery(text: str) -> str:
@@ -713,7 +706,7 @@ def _build_row_data(entry: dict) -> dict:
 
     # 发车、发船时间
     ship = entry.get("ship_date_text", "")
-    data["ship_date"] = _fmt_ship_date(ship) if ship else ""
+    data["ship_date"] = ship
 
     # 配送时段
     delivery = entry.get("delivery_text", "")
@@ -960,7 +953,7 @@ def _build_de_fields(entry: dict) -> dict[str, str]:
 
     # 发车时间
     st = entry.get("ship_date_text", "")
-    result["ship_date"] = _fmt_ship_date(st) if st else ""
+    result["ship_date"] = st
 
     # 时效
     dt = entry.get("delivery_text", "")
@@ -1665,7 +1658,7 @@ def _us_build_cells(shipment: dict, product: dict,
 
     c = col_map.get("ship_date", "")
     if ship and c:
-        cells.append((c, _fmt_ship_date(ship), STYLE_BORDER, "inlineStr"))
+        cells.append((c, ship, STYLE_BORDER, "inlineStr"))
 
     c = col_map.get("delivery", "")
     delivery = shipment.get("delivery_text", "")
