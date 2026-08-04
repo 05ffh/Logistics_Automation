@@ -151,9 +151,11 @@ class KeywordRankChecker:
 
     def __init__(self, asins: set[str], site: str = "de", bsr_asin: str = "",
                  ad_asins: set[str] | None = None,
+                 white_asin: str = "",
                  host: str = CDP_HOST, port: int = CDP_PORT):
         self.asins = asins
         self.ad_asins = ad_asins or asins
+        self.white_asin = white_asin
         self.site = site
         self.bsr_asin = bsr_asin or next(iter(asins), "")
         self.cdp = CdpClient(host, port, timeout=30)
@@ -226,6 +228,7 @@ class KeywordRankChecker:
 
         best_rank: int | None = None
         ad_pages: set[int] = set()
+        ad_pages_white: set[int] = set()
 
         for page in range(1, max_pages + 1):
             if page == 1:
@@ -246,7 +249,10 @@ class KeywordRankChecker:
                 if r["asin"] not in self.asins:
                     continue
                 if r["isAd"] and r["asin"] in self.ad_asins:
-                    ad_pages.add(page)
+                    if self.white_asin and r["asin"] == self.white_asin:
+                        ad_pages_white.add(page)
+                    else:
+                        ad_pages.add(page)
                 if r["rank"] is not None:
                     if best_rank is None or r["rank"] < best_rank:
                         best_rank = r["rank"]
@@ -254,7 +260,8 @@ class KeywordRankChecker:
             if organic_count < 5:
                 break
 
-        return {"organic_rank": best_rank, "ad_pages": sorted(ad_pages)}
+        return {"organic_rank": best_rank, "ad_pages": sorted(ad_pages),
+                "ad_pages_white": sorted(ad_pages_white)}
 
     def _search_via_box(self, keyword: str):
         """通过搜索框输入+提交发起搜索，全程模拟鼠标操作。
@@ -352,7 +359,22 @@ class KeywordRankChecker:
 
 # ── 格式化 ─────────────────────────────────────────────────────────
 
-def format_result(organic_rank: int | None, ad_pages: list[int]) -> str:
+def format_result(organic_rank: int | None, ad_pages: list[int],
+                  ad_pages_white: list[int] | None = None) -> str:
+    """格式化排名结果。
+
+    有 white 拆分时: （广告X,Y）（白广告Z），无广告组显示（/）
+    无 white 时: 旧格式（广告X）（广告Y）...每个页码独立括号。
+    """
+    if ad_pages_white is not None:
+        # 新格式：两段括号
+        non_white = f"（广告{','.join(map(str, ad_pages))}）" if ad_pages else "（/）"
+        white = f"（白广告{','.join(map(str, ad_pages_white))}）" if ad_pages_white else "（/）"
+        suffix = non_white + white
+        if organic_rank is None:
+            return "/" + suffix
+        return f"{organic_rank}{suffix}"
+
     if organic_rank is None and not ad_pages:
         return "/"
     if organic_rank is None:
@@ -443,7 +465,8 @@ def write_results(
     for i, kw in enumerate(keywords):
         if i < len(results):
             r = results[i]
-            val = format_result(r.get("organic_rank"), r.get("ad_pages", []))
+            val = format_result(r.get("organic_rank"), r.get("ad_pages", []),
+                                r.get("ad_pages_white"))
             ws.cell(row=3 + i, column=new_col, value=val)
 
     # 备份后保存
@@ -501,7 +524,7 @@ def _build_summary(args, keywords, pure_results, bsr, timer,
         "bsr": bsr,
         "keywords_total": len(keywords),
         "keywords_ok": sum(1 for r in pure_results if r.get("organic_rank")),
-        "keywords_with_ad": sum(1 for r in pure_results if r.get("ad_pages")),
+        "keywords_with_ad": sum(1 for r in pure_results if r.get("ad_pages") or r.get("ad_pages_white")),
         "results": kw_results,
     }
     if errors:
@@ -527,6 +550,8 @@ def main():
                         help="用于查询 BSR 的 ASIN (默认使用第一个 --asin)")
     parser.add_argument("--ad-asin", nargs="*", default=None,
                         help="只追踪这些 ASIN 的广告位 (默认追踪全部 --asin)")
+    parser.add_argument("--white-asin", default="",
+                        help="白色变体 ASIN，其广告位单独记入第二个括号（白广告X）")
     parser.add_argument("--data-start-col", type=int, default=None,
                         help="数据起始列号 (默认自动检测)")
     parser.add_argument("--dry-run", action="store_true", help="只查询不写入")
@@ -567,7 +592,8 @@ def _run_query(args):
     # ── 查询 ──
     ad_asins = set(args.ad_asin) if args.ad_asin else None
     checker = KeywordRankChecker(asins, site=args.site, bsr_asin=args.bsr_asin,
-                                 ad_asins=ad_asins, host=args.host, port=args.port)
+                                 ad_asins=ad_asins, white_asin=args.white_asin,
+                                 host=args.host, port=args.port)
 
     bsr = next((r["_bsr"] for r in results if "_bsr" in r), "")
 
@@ -595,7 +621,7 @@ def _run_query(args):
                     print(f"(retry: {e})", end=" ", flush=True)
                     time.sleep(3)
                 else:
-                    r = {"organic_rank": None, "ad_pages": [], "_error": str(e)}
+                    r = {"organic_rank": None, "ad_pages": [], "ad_pages_white": [], "_error": str(e)}
                     print(f"FAILED: {e}", end=" ", flush=True)
 
         results.append(r)

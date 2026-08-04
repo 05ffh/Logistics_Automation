@@ -36,7 +36,7 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 # 关键词排名 (鼠标驱动: 搜索框点击+翻页点击，ease-out轨迹模拟真人)
 python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P                        # 猫砂垫
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ...                    # 刮水器
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... --white-asin B0H1R1DGKH  # 刮水器 (白色广告分记)
 python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS  # 反光衣
 
 # 标签页保活

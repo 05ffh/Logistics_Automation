@@ -82,6 +82,7 @@ python -m src.cross_table <统计表> <发货表...> [--json]
 
 # 关键词排名查询 (首页使用搜索框输入，模拟人工搜索保证广告布局一致)
 python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]   # 刮水器 DE
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... --white-asin B0H1R1DGKH  # 刮水器 DE (白色广告分记)
 python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P [--json]        # 猫砂垫 FR
 python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS [--json]    # 反光衣 FR
 
@@ -302,3 +303,4 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 - `--dry-run` 干跑验证
 - `--reset` 忽略断点重新开始
 - `--ad-asin` 指定广告位追踪 ASIN（默认追踪全部 `--asin`）
+- `--white-asin` 指定白色变体 ASIN，其广告位单独记入第二个括号（白广告X），仅 DE 刮水器使用
