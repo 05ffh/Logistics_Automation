@@ -311,6 +311,7 @@ _LABEL_MAP = {
     "仓库": "warehouse",
     "重量": "weight",
     "发货公司": "company",
+    "发货店铺": "store",
     "sku": "sku_count",
     "SKU": "sku_count",
     "是否自搬货": "self_move",
@@ -388,6 +389,16 @@ def _parse_date_line(text: str) -> datetime:
             continue
     today = datetime.now()
     return datetime(today.year, today.month, today.day)
+
+
+def _looks_like_date(text: str) -> bool:
+    """'欧洲发货信息模板：' → False; '7月15日' → True."""
+    return bool(
+        re.match(r"(\d{1,2})\s*月\s*(\d{1,2})", text)
+        or re.match(r"(\d{1,2})\s*[.\-]\s*(\d{1,2})$", text)
+        or re.match(r"\d{4}-\d{2}-\d{2}", text)
+        or re.match(r"\d{1,2}/\d{1,2}", text)
+    )
 
 
 def parse_batch(text: str) -> list[dict]:
@@ -894,8 +905,10 @@ def parse_de_entry(text: str) -> dict | None:
 
     entry: dict = {"products": []}
 
-    # 第1行：日期
-    entry["date"] = _parse_date_line(lines[0])
+    # 第1行：DE 模板固定为 "欧洲发货信息模板："，不含日期。
+    # 有日期格式则解析，否则取 None（insert_de 不用此字段，匹配靠品名+箱数）。
+    entry_date = _parse_date_line(lines[0])
+    entry["date"] = entry_date if _looks_like_date(lines[0]) else None
 
     # 第2行：先过标签匹配（发货公司：云驼 → company），
     # 匹配不到再按裸值兜底（店铺 或 公司名）
