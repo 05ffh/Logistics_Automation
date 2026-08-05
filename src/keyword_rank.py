@@ -260,8 +260,10 @@ class KeywordRankChecker:
             if organic_count < 5:
                 break
 
-        return {"organic_rank": best_rank, "ad_pages": sorted(ad_pages),
-                "ad_pages_white": sorted(ad_pages_white)}
+        result = {"organic_rank": best_rank, "ad_pages": sorted(ad_pages)}
+        if self.white_asin:
+            result["ad_pages_white"] = sorted(ad_pages_white)
+        return result
 
     def _search_via_box(self, keyword: str):
         """通过搜索框输入+提交发起搜索，全程模拟鼠标操作。
@@ -621,7 +623,9 @@ def _run_query(args):
                     print(f"(retry: {e})", end=" ", flush=True)
                     time.sleep(3)
                 else:
-                    r = {"organic_rank": None, "ad_pages": [], "ad_pages_white": [], "_error": str(e)}
+                    r = {"organic_rank": None, "ad_pages": [], "_error": str(e)}
+                    if args.white_asin:
+                        r["ad_pages_white"] = []
                     print(f"FAILED: {e}", end=" ", flush=True)
 
         results.append(r)
