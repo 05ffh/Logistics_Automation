@@ -417,12 +417,15 @@ def read_keywords(excel_path: Path, data_start_col: int | None = None) -> tuple[
     wb = openpyxl.load_workbook(excel_path)
     ws = wb.active
 
-    # B 列关键词 (row 3+)
+    # B 列关键词 (row 3+)，遇到 ASIN 标注(B0前缀)自动截断
     keywords = []
     for row in range(3, ws.max_row + 1):
         v = ws.cell(row=row, column=2).value
         if v:
-            keywords.append(str(v).strip())
+            sv = str(v).strip()
+            if sv.startswith("B0"):
+                break
+            keywords.append(sv)
 
     # 确定数据起始列
     start_col = data_start_col if data_start_col is not None else _detect_data_start_col(ws)
