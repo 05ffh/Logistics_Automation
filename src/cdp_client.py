@@ -117,6 +117,31 @@ class CdpClient:
             params.pop("clickCount", None)
         return self._send({"method": "Input.dispatchMouseEvent", "params": params})
 
+    def key_event(self, event_type: str, vk: int, key: str, code: str = "",
+                  modifiers: int = 0) -> dict:
+        """通过 Input.dispatchKeyEvent 发送键盘事件。
+
+        event_type: 'keyDown', 'keyUp', 'char'
+        modifiers: 2=Ctrl, 1=Alt, 4=Meta, 8=Shift
+        """
+        params: dict = {"type": event_type, "windowsVirtualKeyCode": vk, "key": key}
+        if code:
+            params["code"] = code
+        if modifiers:
+            params["modifiers"] = modifiers
+        return self._send({"method": "Input.dispatchKeyEvent", "params": params})
+
+    def wheel_event(self, x: int, y: int, delta_y: int, delta_x: int = 0) -> dict:
+        """通过 Input.dispatchMouseEvent 发送鼠标滚轮事件。
+
+        delta_y > 0 向下滚动，delta_y < 0 向上滚动。
+        """
+        return self._send({"method": "Input.dispatchMouseEvent", "params": {
+            "type": "mouseWheel",
+            "x": x, "y": y,
+            "deltaX": delta_x, "deltaY": delta_y,
+        }})
+
     def click_at(self, x: int, y: int, human_like: bool = True) -> dict:
         """在 (x, y) 坐标点击。human_like=True 时先移到目标，带微抖动。"""
         import random as _random

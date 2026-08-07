@@ -85,6 +85,8 @@ python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... --white-asin 
 python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]   # 刮水器 DE (简化版)
 python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P [--json]        # 猫砂垫 FR
 python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS [--json]    # 反光衣 FR
+python -m src.keyword_rank <excel> --site us --asin B0GXP3PP8C B0GXPPP7YM B0GXP7CRSZ B0GXP7X4FV B0GXP89L6P [--json]   # 双面U型枕 US
+python -m src.keyword_rank <excel> --site ca --asin B0DJ7GK9PH B0CWP1GZLW B0CWP3757G B0DJ7DBFX3 B0GXYYZQQ3 B0GXYP8RHB B0H55L7PM6 B0H55FPPYG [--json]   # 加拿大驼峰U型枕 CA
 
 # 标签页保活 (防 session 过期)
 python -m src.keepalive --status      # 查看 CDP 状态
@@ -288,6 +290,8 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 | 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 B0H1R1DGKH | 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4 | 刮水器关键词.xlsx |
 | 猫砂垫 | fr | B0CH4N8V6P | 同 ASIN | B0CH4N8V6P | 猫砂垫关键词7.29.xlsx |
 | 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | 同 ASIN | B0GCDF56DJ | 反光衣关键词.xlsx |
+| 双面U型枕 | us | B0GXP3PP8C B0GXPPP7YM B0GXP7CRSZ B0GXP7X4FV B0GXP89L6P | 同 ASIN | B0GXP3PP8C | 双面U型枕.xlsx |
+| 加拿大驼峰U型枕 | ca | B0DJ7GK9PH B0CWP1GZLW B0CWP3757G B0DJ7DBFX3 B0GXYYZQQ3 B0GXYP8RHB B0H55L7PM6 B0H55FPPYG | 同 ASIN | B0DJ7GK9PH | 加拿大驼峰u型枕.xlsx |
 
 ### 结果格式
 

@@ -38,6 +38,8 @@ except ImportError:
 SITE_DOMAIN = {
     "de": "amazon.de",
     "fr": "amazon.fr",
+    "us": "amazon.com",
+    "ca": "amazon.ca",
 }
 BSR_PATTERN = re.compile(r'^\d+-\d+$')
 MAX_PAGES = 7
@@ -162,15 +164,35 @@ class KeywordRankChecker:
         self._tab_ws: str | None = None
 
     def _ensure_tab(self):
-        """确保连接到一个 Amazon 标签页。"""
+        """确保连接到一个 Amazon 标签页，优先匹配首页（非搜索结果页）。"""
         self.cdp.close()
         tabs = self.cdp.list_tabs()
         domain = SITE_DOMAIN[self.site]
-        for t in tabs:
+
+        def _is_amazon_tab(t: dict) -> bool:
             url = t.get("url", "")
-            if domain in url and "aax" not in url and "service-worker" not in url:
+            if domain not in url:
+                return False
+            if t.get("type") not in ("page", None):
+                return False
+            if "aax" in url or "service-worker" in url:
+                return False
+            return True
+
+        # 优先：非搜索结果页（首页 / dp 产品页）
+        for t in tabs:
+            if _is_amazon_tab(t) and "s?k=" not in t.get("url", ""):
                 self._tab_ws = t["webSocketDebuggerUrl"]
                 self.cdp.connect_tab(self._tab_ws)
+                self.cdp._send({"method": "Page.bringToFront", "params": {}, "id": 1})
+                return
+
+        # 回退：任意匹配的标签页
+        for t in tabs:
+            if _is_amazon_tab(t):
+                self._tab_ws = t["webSocketDebuggerUrl"]
+                self.cdp.connect_tab(self._tab_ws)
+                self.cdp._send({"method": "Page.bringToFront", "params": {}, "id": 1})
                 return
 
         raise RuntimeError(
@@ -207,7 +229,6 @@ class KeywordRankChecker:
         for _ in range(steps):
             y = 300 + random.randint(0, 1200)
             self._safe_evaluate(f"window.scrollTo(0, {y})")
-            # 滚动后鼠标随机移动（模拟阅读视线）
             mx = 200 + random.randint(0, 600)
             my = 100 + random.randint(0, 800)
             self.cdp.mouse_event("mouseMoved", mx, my)
@@ -558,7 +579,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Amazon 关键词排名查询")
     parser.add_argument("excel", type=Path, help="关键词 Excel 文件路径")
-    parser.add_argument("--site", choices=["de", "fr"], default="de",
+    parser.add_argument("--site", choices=["de", "fr", "us", "ca"], default="de",
                         help="Amazon 站点 (默认 de)")
     parser.add_argument("--asin", nargs="+", required=True,
                         help="要追踪的产品 ASIN (至少一个)")
