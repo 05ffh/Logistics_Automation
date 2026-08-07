@@ -11,7 +11,7 @@
 | ASIN 图片匹配 | `python -m src.image_inserter build/insert [--json]` | ASIN → 图片库 → 嵌入 B 列 |
 | 格式迁移 | `python -m src.migrate <旧表> [--json]` | 旧规范 → 新规范列位映射 |
 | 跨表填写 | `python -m src.cross_table <统计表> <发货表...> [--json]` | ASIN 关联，扣在采/加在途 |
-| 关键词排名 | `python -m src.keyword_rank <excel> --site de/fr --asin ... [--json]` | 鼠标驱动 CDP 搜索(点击+翻页)，模拟真人操作。BSR多语言自动提取，CDP Chrome需养号 |
+| 关键词排名 | `python -m src.keyword_rank <excel> --site de/fr/us/ca --asin ... [--json]` | 鼠标驱动 CDP 搜索(点击+翻页)，模拟真人操作。BSR多语言自动提取，CDP Chrome需养号 |
 | 标签页保活 | `python -m src.keepalive --status/--daemon` | 后台守护防 session 过期 |
 
 ## 使用
@@ -35,9 +35,11 @@ python -m src.migrate <旧表> -o <输出路径>
 python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 # 关键词排名 (鼠标驱动: 搜索框点击+翻页点击，ease-out轨迹模拟真人)
-python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P                        # 猫砂垫
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... --white-asin B0H1R1DGKH  # 刮水器 (白色广告分记)
-python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS  # 反光衣
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT --white-asin B0H1R1DGKH --bsr-asin 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4  # 刮水器
+python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P                                    # 猫砂垫
+python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS              # 反光衣
+python -m src.keyword_rank <excel> --site us --asin B0GXP3PP8C B0GXPPP7YM B0GXP7CRSZ B0GXP7X4FV B0GXP89L6P  # 双面U型枕
+python -m src.keyword_rank <excel> --site ca --asin B0DJ7GK9PH B0CWP1GZLW B0CWP3757G B0DJ7DBFX3 B0GXYYZQQ3 B0GXYP8RHB B0H55L7PM6 B0H55FPPYG  # 加拿大驼峰U型枕
 
 # 标签页保活
 python -m src.keepalive --status   # 查看 CDP 状态
