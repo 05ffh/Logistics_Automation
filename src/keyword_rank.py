@@ -149,7 +149,7 @@ _BSR_JS = """
 class KeywordRankChecker:
     """关键词排名查询器 — CDP 操控浏览器，零点击安全策略。"""
 
-    def __init__(self, asins: set[str], site: str = "de", bsr_asin: str = "",
+    def __init__(self, asins: set[str], site: str = "de", bsr_asins: list[tuple[str, str]] | None = None,
                  ad_asins: set[str] | None = None,
                  white_asin: str = "",
                  host: str = CDP_HOST, port: int = CDP_PORT):
@@ -157,7 +157,7 @@ class KeywordRankChecker:
         self.ad_asins = ad_asins or asins
         self.white_asin = white_asin
         self.site = site
-        self.bsr_asin = bsr_asin or next(iter(asins), "")
+        self.bsr_asins = bsr_asins or [("", next(iter(asins)))]
         self.cdp = CdpClient(host, port, timeout=30)
         self._tab_ws: str | None = None
 
@@ -327,28 +327,31 @@ class KeywordRankChecker:
     # ── BSR 大类排名 ──────────────────────────────────────────────
 
     def get_bsr(self) -> str:
-        """获取 Best Sellers Rank, 返回 '6-1310' 格式。失败重试一次。"""
-        for attempt in range(2):
-            try:
-                self._ensure_tab()
-                self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/dp/{self.bsr_asin}")
-                self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
+        """获取 Best Sellers Rank，多类别时返回 '窗户类3-904 / 浴室类16-904'。"""
+        parts = []
+        for label, asin in self.bsr_asins:
+            for attempt in range(2):
+                try:
+                    self._ensure_tab()
+                    self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/dp/{asin}")
+                    self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
-                # 展开折叠区域（DE/FR 的 BSR 默认折叠）
-                self._safe_evaluate(_BSR_EXPAND_JS)
-                time.sleep(1.0)
+                    self._safe_evaluate(_BSR_EXPAND_JS)
+                    time.sleep(1.0)
 
-                raw = self._safe_evaluate(_BSR_JS)
-                ranks = json.loads(raw["result"]["result"]["value"])["ranks"]
+                    raw = self._safe_evaluate(_BSR_JS)
+                    ranks = json.loads(raw["result"]["result"]["value"])["ranks"]
 
-                if ranks:
-                    nums = sorted(int(r["rank"]) for r in ranks)
-                    return "-".join(str(n) for n in nums)
-            except Exception as e:
-                if attempt == 1:
-                    raise
-                time.sleep(2)
-        return ""
+                    if ranks:
+                        nums = sorted(int(r["rank"]) for r in ranks)
+                        val = "-".join(str(n) for n in nums)
+                        parts.append(f"{label}{val}" if label else val)
+                    break
+                except Exception:
+                    if attempt == 1:
+                        raise
+                    time.sleep(2)
+        return " / ".join(parts) if parts else ""
 
     def close(self):
         self.cdp.close()
@@ -503,6 +506,18 @@ def _save_progress(progress_path: Path, results: list[dict]):
     progress_path.write_text(json.dumps({"results": results}, ensure_ascii=False), encoding="utf-8")
 
 
+def _parse_bsr_args(raw: list[str]) -> list[tuple[str, str]]:
+    """Parse '标签:ASIN' pairs from --bsr-asin args. Plain ASIN → empty label."""
+    result = []
+    for item in raw:
+        if ":" in item:
+            label, asin = item.split(":", 1)
+            result.append((label, asin))
+        else:
+            result.append(("", item))
+    return result
+
+
 def _build_summary(args, keywords, pure_results, bsr, timer,
                    dry_run=False, column=None, backup=None):
     """Build JSON summary for --json output."""
@@ -521,7 +536,7 @@ def _build_summary(args, keywords, pure_results, bsr, timer,
         "elapsed": round(timer.elapsed, 1),
         "site": args.site,
         "asins": list(args.asin),
-        "bsr_asin": args.bsr_asin or list(args.asin)[0],
+        "bsr_asin": args.bsr_asin if args.bsr_asin else [list(args.asin)[0]],
         "bsr": bsr,
         "keywords_total": len(keywords),
         "keywords_ok": sum(1 for r in pure_results if r.get("organic_rank")),
@@ -547,8 +562,8 @@ def main():
                         help="Amazon 站点 (默认 de)")
     parser.add_argument("--asin", nargs="+", required=True,
                         help="要追踪的产品 ASIN (至少一个)")
-    parser.add_argument("--bsr-asin", default="",
-                        help="用于查询 BSR 的 ASIN (默认使用第一个 --asin)")
+    parser.add_argument("--bsr-asin", nargs="*", default=[],
+                        help="用于查询 BSR 的 ASIN（标签:ASIN，如 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4）")
     parser.add_argument("--ad-asin", nargs="*", default=None,
                         help="只追踪这些 ASIN 的广告位 (默认追踪全部 --asin)")
     parser.add_argument("--white-asin", default="",
@@ -592,7 +607,8 @@ def _run_query(args):
 
     # ── 查询 ──
     ad_asins = set(args.ad_asin) if args.ad_asin else None
-    checker = KeywordRankChecker(asins, site=args.site, bsr_asin=args.bsr_asin,
+    bsr_asins = _parse_bsr_args(args.bsr_asin) if args.bsr_asin else None
+    checker = KeywordRankChecker(asins, site=args.site, bsr_asins=bsr_asins,
                                  ad_asins=ad_asins, white_asin=args.white_asin,
                                  host=args.host, port=args.port)
 

@@ -27,10 +27,11 @@
 
 用法:
 ```bash
-# 刮水器 (7个ASIN，自然位和广告位全部追踪；白色B0H1R1DGKH广告分记)
+# 刮水器 (7个ASIN，自然位和广告位全部追踪；白色B0H1R1DGKH广告分记；BSR分窗户/浴室两类)
 python -m src.keyword_rank <Excel路径> --site de \
     --asin B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT \
-    --white-asin B0H1R1DGKH
+    --white-asin B0H1R1DGKH \
+    --bsr-asin 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4
 
 # 猫砂垫
 python -m src.keyword_rank <Excel路径> --site fr --asin B0CH4N8V6P
