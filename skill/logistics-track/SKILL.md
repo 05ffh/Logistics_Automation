@@ -81,8 +81,8 @@ python -m src.migrate <旧格式Excel> -o <输出路径> [--json]
 python -m src.cross_table <统计表> <发货表...> [--json]
 
 # 关键词排名查询 (首页使用搜索框输入，模拟人工搜索保证广告布局一致)
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]   # 刮水器 DE
-python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... --white-asin B0H1R1DGKH  # 刮水器 DE (白色广告分记)
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... --white-asin B0H1R1DGKH --bsr-asin 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4   # 刮水器 DE
+python -m src.keyword_rank <excel> --site de --asin B0CLXXD2X4 ... [--json]   # 刮水器 DE (简化版)
 python -m src.keyword_rank <excel> --site fr --asin B0CH4N8V6P [--json]        # 猫砂垫 FR
 python -m src.keyword_rank <excel> --site fr --asin B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS [--json]    # 反光衣 FR
 
@@ -285,7 +285,7 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 | 产品 | 站点 | ASIN | 广告 ASIN | BSR ASIN | Excel 路径 |
 |------|------|------|-----------|----------|-----------|
-| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 B0H1R1DGKH | B0CLXXD2X4 | 刮水器关键词.xlsx |
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 B0H1R1DGKH | 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4 | 刮水器关键词.xlsx |
 | 猫砂垫 | fr | B0CH4N8V6P | 同 ASIN | B0CH4N8V6P | 猫砂垫关键词7.29.xlsx |
 | 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | 同 ASIN | B0GCDF56DJ | 反光衣关键词.xlsx |
 
