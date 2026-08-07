@@ -243,7 +243,6 @@ class KeywordRankChecker:
             time.sleep(SCROLL_PAUSE)
 
             results = self._extract_page()
-            organic_count = sum(1 for r in results if not r["isAd"])
 
             for r in results:
                 if r["asin"] not in self.asins:
@@ -256,9 +255,6 @@ class KeywordRankChecker:
                 if r["rank"] is not None:
                     if best_rank is None or r["rank"] < best_rank:
                         best_rank = r["rank"]
-
-            if organic_count < 5:
-                break
 
         result = {"organic_rank": best_rank, "ad_pages": sorted(ad_pages)}
         if self.white_asin:
