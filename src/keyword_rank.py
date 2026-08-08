@@ -176,7 +176,7 @@ class KeywordRankChecker:
         self.white_asin = white_asin
         self.site = site
         self.bsr_asins = bsr_asins or [("", next(iter(asins)))]
-        self.cdp = CdpClient(host, port, timeout=30)
+        self.cdp = CdpClient(host, port, timeout=45)
         self._tab_ws: str | None = None
 
     def _ensure_tab(self):
@@ -310,7 +310,7 @@ class KeywordRankChecker:
                         ad_pages_white.add(page)
                     else:
                         ad_pages.add(page)
-                if r["rank"] is not None:
+                if r["rank"] is not None and not r["isAd"]:
                     if best_rank is None or r["rank"] < best_rank:
                         best_rank = r["rank"]
 
@@ -403,6 +403,10 @@ class KeywordRankChecker:
                     self._wait_for_cards()
                     self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
+                    # 滚到底部确保 BSR 区域渲染（长页面 BSR 在 4000px+ 以下）
+                    self._safe_evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    time.sleep(1.0)
+
                     self._safe_evaluate(_BSR_EXPAND_JS)
                     time.sleep(1.0)
 
@@ -436,16 +440,6 @@ def format_result(organic_rank: int | None, ad_pages: list[int],
     无 white 时: 旧格式（广告X）（广告Y）...每个页码独立括号。
     carousel: ASIN 出现在页面内嵌/变体组件中，无法提取排名，标记（内嵌）。
     """
-    # Carousel presence without a rank
-    if carousel and organic_rank is None:
-        prefix = "（内嵌）"
-        if ad_pages_white is not None:
-            non_white = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else "（/）"
-            white = f"（白广告{''.join(map(str, ad_pages_white))}）" if ad_pages_white else "（/）"
-            return prefix + non_white + white
-        suffix = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else ""
-        return prefix + suffix
-
     if ad_pages_white is not None:
         non_white = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else "（/）"
         white = f"（白广告{''.join(map(str, ad_pages_white))}）" if ad_pages_white else "（/）"
