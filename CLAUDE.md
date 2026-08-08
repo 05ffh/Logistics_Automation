@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-物流轨迹自动查询系统。读取共享 Excel 中的发货明细，通过 CDP 操控 Edge 浏览器在物流网站查询运单轨迹，将最新路由信息按公司写回"物流轨迹N"列。
+物流轨迹自动查询系统。读取共享 Excel 中的发货明细，通过 CDP 操控 Chrome 浏览器在物流网站查询运单轨迹，将最新路由信息按公司写回"物流轨迹N"列。
 
 当前支持三家公司：宁致(NZ)、云驼(999)、小满(XM)。采用适配器模式，可扩展。
 
@@ -21,7 +21,7 @@
 
 | 产品 | --site | --asin | --bsr-asin | 数据起始列 |
 |------|--------|--------|------------|-----------|
-| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT | B0CLXXD2X4 | 自动检测 |
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT B0GSZHYB2T B0H1R1DGKH B0H4MC8STF B0H4LXJ5QG B0H4M6H2GT | 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4 | 自动检测 |
 | 猫砂垫 | fr | B0CH4N8V6P | B0CH4N8V6P | 自动检测 |
 | 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | B0GCDF56DJ | 自动检测 |
 | 双面U型枕 | us | B0GXP3PP8C B0GXPPP7YM B0GXP7CRSZ B0GXP7X4FV B0GXP89L6P | B0GXP3PP8C | 自动检测 |
