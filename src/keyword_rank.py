@@ -438,7 +438,7 @@ def format_result(organic_rank: int | None, ad_pages: list[int],
 
     有 white 拆分时: （广告XY）（白广告Z），无广告组显示（/）
     无 white 时: 旧格式（广告X）（广告Y）...每个页码独立括号。
-    carousel: ASIN 出现在页面内嵌/变体组件中，无法提取排名，标记（内嵌）。
+    carousel: ASIN 出现在页面内嵌/变体组件中，无法提取排名，统一输出 "/"。
     """
     if ad_pages_white is not None:
         non_white = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else "（/）"
