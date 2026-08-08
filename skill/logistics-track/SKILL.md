@@ -281,7 +281,17 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 **CDP Chrome 养号**：CDP Chrome 使用独立空白 Profile（`--user-data-dir`），无浏览历史/Cookie 时 Amazon 不投放广告或广告布局异常。首次使用需在 CDP Chrome 中**登录 Amazon 账号**并浏览几分钟（搜索、浏览商品详情页、加购），正常关闭 Chrome 后 Cookie 持久化，后续查询广告布局才与人工搜索一致。
 
-**站点支持**：Amazon DE (`--site de`) / Amazon FR (`--site fr`)，`.bat` 文件中需包含对应站点标签页。
+**站点支持**：Amazon DE (`--site de`) / Amazon FR (`--site fr`) / Amazon US (`--site us`) / Amazon CA (`--site ca`)，`.bat` 文件中需包含对应站点标签页。
+
+**并行查询**：不同站点的产品可同时开两个终端并行跑，站点/Domain/Excel/进程全隔离，互不干扰。同站点产品（如 FR 猫砂垫+反光衣）需串行。
+
+```bash
+# 终端1
+python -m src.keyword_rank <产品1>.xlsx --site de --asin ...
+
+# 终端2（延迟30-60s启动，避免同时搜索）
+python -m src.keyword_rank <产品2>.xlsx --site fr --asin ...
+```
 
 ### 产品配置
 
@@ -295,7 +305,7 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 
 ### 结果格式
 
-`9` = 自然位第 9；`/` = 未找到；`/（广告1）` = 未找到自然位、广告在第 1 页；`9（广告1）` = 自然位第 9、同时广告在第 1 页。
+`9` = 自然位第 9；`/` = 未找到；`/（广告1）` = 未找到自然位、广告在第 1 页；`9（广告12）` = 自然位第 9、广告在第 1 和第 2 页。多页广告合并为一个括号，页号连写无分隔符。
 
 ### 特性
 
@@ -308,3 +318,4 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 - `--reset` 忽略断点重新开始
 - `--ad-asin` 指定广告位追踪 ASIN（默认追踪全部 `--asin`）
 - `--white-asin` 指定白色变体 ASIN，其广告位单独记入第二个括号（白广告X），仅 DE 刮水器使用
+- 并行查询：不同站点产品可开两个终端同时跑，站点/Domain/Excel 全隔离，耗时减半

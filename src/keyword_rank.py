@@ -47,23 +47,26 @@ CDP_HOST = "localhost"
 CDP_PORT = 9222
 
 # 模拟人工操作的时间参数（秒）
-PAGE_LOAD_MIN = 3.5   # 页面加载最小等待
-PAGE_LOAD_MAX = 6.0   # 页面加载最大等待
-SCROLL_PAUSE = 0.8    # 滚动停顿
-KEYWORD_GAP_MIN = 2.0 # 关键词切换间隔最小
-KEYWORD_GAP_MAX = 4.0 # 关键词切换间隔最大
+PAGE_LOAD_MIN = 1.5   # 页面加载最小等待（卡片已就绪后的额外缓冲）
+PAGE_LOAD_MAX = 2.5
+SCROLL_PAUSE = 0.3    # 滚动停顿
+KEYWORD_GAP_MIN = 1.0 # 关键词切换间隔最小
+KEYWORD_GAP_MAX = 2.0 # 关键词切换间隔最大
 
 # ── JS 脚本（不包含任何点击操作）──────────────────────────────────
 
 _EXTRACT_JS = """
 (() => {
     const results = [];
+    const cardAsins = new Set();
+    const allDpAsins = new Set();
     const adTexts = ['Sponsored', 'Sponsorisé', 'Gesponsert'];
 
     const cards = document.querySelectorAll('[data-asin]');
     for (const card of cards) {
         const asin = card.getAttribute('data-asin');
         if (!asin) continue;
+        cardAsins.add(asin);
 
         const hrefs = Array.from(card.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
         const dpLink = hrefs.find(h => /\\/dp\\//.test(h) && /ref=sr_/.test(h));
@@ -94,10 +97,23 @@ _EXTRACT_JS = """
         }
 
         let rank = null;
-        if (dpLink) { const m = dpLink.match(/ref=sr_1_(\\d+)/); if (m) rank = parseInt(m[1]); }
+        if (dpLink) { const m = dpLink.match(/ref=sr_\\d+_(\\d+)/); if (m) rank = parseInt(m[1]); }
+        if (rank === null) {
+            const idx = card.getAttribute('data-index');
+            if (idx) rank = parseInt(idx);
+        }
         results.push({asin, rank, isAd: hasAd});
     }
-    return JSON.stringify({results, count: results.length});
+
+    // Collect all /dp/ ASINs on page — catches carousel/inline items whose
+    // [data-asin] cards lack ref=sr_ links (variants, widget embeds, etc.)
+    const allLinks = document.querySelectorAll('a[href*="/dp/"]');
+    for (const a of allLinks) {
+        const m = a.getAttribute('href').match(/\\/dp\\/([A-Z0-9]{10})/);
+        if (m) allDpAsins.add(m[1]);
+    }
+
+    return JSON.stringify({results, count: results.length, allDpAsins: Array.from(allDpAsins)});
 })()
 """
 
@@ -202,9 +218,10 @@ class KeywordRankChecker:
     def _navigate(self, url: str):
         self._safe_evaluate(f'window.location.href = "{url}"')
 
-    def _extract_page(self) -> list[dict]:
+    def _extract_page(self) -> tuple[list[dict], set[str]]:
         raw = self._safe_evaluate(_EXTRACT_JS)
-        return json.loads(raw["result"]["result"]["value"])["results"]
+        data = json.loads(raw["result"]["result"]["value"])
+        return data["results"], set(data.get("allDpAsins", []))
 
     def _safe_evaluate(self, js: str, retries: int = 2) -> dict:
         """带断线恢复的 evaluate，WebSocket 超时时重连并重试。"""
@@ -221,6 +238,17 @@ class KeywordRankChecker:
         """随机等待，模拟人工操作的不规律节奏。"""
         import random
         time.sleep(lo + random.random() * (hi - lo))
+
+    def _wait_for_cards(self, timeout: float = 10.0) -> bool:
+        """轮询等待搜索结果卡片渲染完成。找到卡片立即返回 True。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            v = self._safe_evaluate("document.querySelectorAll('[data-asin]').length")
+            count = v.get("result", {}).get("result", {}).get("value", 0)
+            if count > 0:
+                return True
+            time.sleep(0.3)
+        return False
 
     def _scroll_like_human(self):
         """模拟人工浏览：分段滚动 + 随机鼠标移动。"""
@@ -240,7 +268,7 @@ class KeywordRankChecker:
     # ── 搜索 ──────────────────────────────────────────────────────
 
     def search_keyword(self, keyword: str, max_pages: int = MAX_PAGES) -> dict:
-        """搜索关键词，返回 {organic_rank, ad_pages}。
+        """搜索关键词，返回 {organic_rank, ad_pages, carousel}。
 
         首关键词首页通过搜索框输入提交（模拟人工搜索行为），
         后续页用 URL 翻页，保证广告布局与人工搜索一致。
@@ -250,6 +278,9 @@ class KeywordRankChecker:
         best_rank: int | None = None
         ad_pages: set[int] = set()
         ad_pages_white: set[int] = set()
+        all_dp_asins: set[str] = set()  # ASINs found in any /dp/ link across all pages
+        tracked_card_asins: set[str] = set()  # tracked ASINs that appeared in a [data-asin] card
+        ad_asins_found: set[str] = set()  # tracked ASINs that appeared as ads
 
         for page in range(1, max_pages + 1):
             if page == 1:
@@ -257,18 +288,24 @@ class KeywordRankChecker:
             else:
                 if not self._click_next_page():
                     break  # "下一页"按钮不可达，终止翻页
+
+            # 等卡片渲染完成后再加少量缓冲
+            self._wait_for_cards()
             self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
             # 模拟人工浏览行为
             self._scroll_like_human()
             time.sleep(SCROLL_PAUSE)
 
-            results = self._extract_page()
+            results, dp_asins = self._extract_page()
+            all_dp_asins |= dp_asins
 
             for r in results:
                 if r["asin"] not in self.asins:
                     continue
+                tracked_card_asins.add(r["asin"])
                 if r["isAd"] and r["asin"] in self.ad_asins:
+                    ad_asins_found.add(r["asin"])
                     if self.white_asin and r["asin"] == self.white_asin:
                         ad_pages_white.add(page)
                     else:
@@ -277,9 +314,17 @@ class KeywordRankChecker:
                     if best_rank is None or r["rank"] < best_rank:
                         best_rank = r["rank"]
 
+        # Carousel: at least one tracked ASIN appeared on the page (card or /dp/
+        # link), never got a rank, and was never an ad.  Per-ASIN: we exclude
+        # ad ASINs so a different ASIN's ad doesn't suppress this ASIN's carousel.
+        carousel_candidates = tracked_card_asins | (all_dp_asins & self.asins)
+        carousel = best_rank is None and bool(carousel_candidates - ad_asins_found)
+
         result = {"organic_rank": best_rank, "ad_pages": sorted(ad_pages)}
         if self.white_asin:
             result["ad_pages_white"] = sorted(ad_pages_white)
+        if carousel:
+            result["carousel"] = True
         return result
 
     def _search_via_box(self, keyword: str):
@@ -355,6 +400,7 @@ class KeywordRankChecker:
                 try:
                     self._ensure_tab()
                     self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/dp/{asin}")
+                    self._wait_for_cards()
                     self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
                     self._safe_evaluate(_BSR_EXPAND_JS)
@@ -382,16 +428,27 @@ class KeywordRankChecker:
 # ── 格式化 ─────────────────────────────────────────────────────────
 
 def format_result(organic_rank: int | None, ad_pages: list[int],
-                  ad_pages_white: list[int] | None = None) -> str:
+                  ad_pages_white: list[int] | None = None,
+                  carousel: bool = False) -> str:
     """格式化排名结果。
 
-    有 white 拆分时: （广告X,Y）（白广告Z），无广告组显示（/）
+    有 white 拆分时: （广告XY）（白广告Z），无广告组显示（/）
     无 white 时: 旧格式（广告X）（广告Y）...每个页码独立括号。
+    carousel: ASIN 出现在页面内嵌/变体组件中，无法提取排名，标记（内嵌）。
     """
+    # Carousel presence without a rank
+    if carousel and organic_rank is None:
+        prefix = "（内嵌）"
+        if ad_pages_white is not None:
+            non_white = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else "（/）"
+            white = f"（白广告{''.join(map(str, ad_pages_white))}）" if ad_pages_white else "（/）"
+            return prefix + non_white + white
+        suffix = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else ""
+        return prefix + suffix
+
     if ad_pages_white is not None:
-        # 新格式：两段括号
-        non_white = f"（广告{','.join(map(str, ad_pages))}）" if ad_pages else "（/）"
-        white = f"（白广告{','.join(map(str, ad_pages_white))}）" if ad_pages_white else "（/）"
+        non_white = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else "（/）"
+        white = f"（白广告{''.join(map(str, ad_pages_white))}）" if ad_pages_white else "（/）"
         suffix = non_white + white
         if organic_rank is None:
             return "/" + suffix
@@ -400,8 +457,8 @@ def format_result(organic_rank: int | None, ad_pages: list[int],
     if organic_rank is None and not ad_pages:
         return "/"
     if organic_rank is None:
-        return "/" + "".join(f"（广告{p}）" for p in ad_pages)
-    suffix = "".join(f"（广告{p}）" for p in ad_pages)
+        return f"/（广告{''.join(map(str, ad_pages))}）"
+    suffix = f"（广告{''.join(map(str, ad_pages))}）" if ad_pages else ""
     return f"{organic_rank}{suffix}"
 
 
@@ -491,7 +548,8 @@ def write_results(
         if i < len(results):
             r = results[i]
             val = format_result(r.get("organic_rank"), r.get("ad_pages", []),
-                                r.get("ad_pages_white"))
+                                r.get("ad_pages_white"),
+                                carousel=r.get("carousel", False))
             ws.cell(row=3 + i, column=new_col, value=val)
 
     # 备份后保存
@@ -545,7 +603,8 @@ def _build_summary(args, keywords, pure_results, bsr, timer,
     kw_results = {}
     errors = []
     for i, (kw, r) in enumerate(zip(keywords, pure_results)):
-        label = format_result(r.get("organic_rank"), r.get("ad_pages", []))
+        label = format_result(r.get("organic_rank"), r.get("ad_pages", []),
+                              carousel=r.get("carousel", False))
         kw_results[kw] = label
         if r.get("_error"):
             errors.append({"keyword": kw, "error": r["_error"]})
@@ -665,7 +724,8 @@ def _run_query(args):
                     print(f"FAILED: {e}", end=" ", flush=True)
 
         results.append(r)
-        label = format_result(r.get("organic_rank"), r.get("ad_pages", []))
+        label = format_result(r.get("organic_rank"), r.get("ad_pages", []),
+                              carousel=r.get("carousel", False))
         print(f"→ {label}", end="")
 
         _save_progress(progress_path, results)
@@ -680,7 +740,8 @@ def _run_query(args):
         print(f"\n\n[Dry run] Would write {len(pure_results)} results to column {col_letter}")
         print(f"BSR: {bsr}")
         for i, (kw, r) in enumerate(zip(keywords, pure_results)):
-            label = format_result(r.get("organic_rank"), r.get("ad_pages", []))
+            label = format_result(r.get("organic_rank"), r.get("ad_pages", []),
+                              carousel=r.get("carousel", False))
             print(f"  [{i+1:2d}] {kw:30s} → {label}")
         if args.json:
             print_json_summary(_build_summary(args, keywords, pure_results, bsr,
