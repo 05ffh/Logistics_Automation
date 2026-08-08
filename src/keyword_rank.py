@@ -565,11 +565,14 @@ def _progress_bar(i: int, total: int, width: int = 30) -> str:
 
 
 def _load_progress(progress_path: Path) -> tuple[list[dict], int]:
-    """加载断点进度文件，返回 (results, 已完成数量)。不存在则返回 ([], 0)。"""
+    """加载断点进度文件，返回 (results, 已完成关键词数)。不存在则返回 ([], 0)。"""
     if progress_path.exists():
         try:
             data = json.loads(progress_path.read_text(encoding="utf-8"))
-            return data.get("results", []), len(data.get("results", []))
+            results = data.get("results", [])
+            # 不计 BSR meta 条目，避免 done 比实际关键词数多 1，导致续跑跳词错位
+            done = sum(1 for r in results if "_bsr" not in r)
+            return results, done
         except (json.JSONDecodeError, KeyError):
             pass
     return [], 0
