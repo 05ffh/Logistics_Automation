@@ -403,12 +403,12 @@ class KeywordRankChecker:
                     self._wait_for_cards()
                     self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
-                    # 滚到底部确保 BSR 区域渲染（长页面 BSR 在 4000px+ 以下）
+                    # 滚到底部确保 BSR 区域渲染（长页面 BSR 懒加载，等久一些）
                     self._safe_evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    time.sleep(1.0)
+                    time.sleep(2.5)
 
                     self._safe_evaluate(_BSR_EXPAND_JS)
-                    time.sleep(1.0)
+                    time.sleep(1.5)
 
                     raw = self._safe_evaluate(_BSR_JS)
                     ranks = json.loads(raw["result"]["result"]["value"])["ranks"]
