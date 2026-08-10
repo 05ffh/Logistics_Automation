@@ -119,11 +119,16 @@ _EXTRACT_JS = """
 
 _BSR_EXPAND_JS = """
 (() => {
-    // 只展开按钮/span 类元素，跳过链接（US 站 "See Top 100" 等 href 元素被点击会破坏 BSR 区域）
+    // 展开折叠区域，但跳过真实导航链接（US 站 "See Top 100" 等 href=/gp/ 会破坏 BSR 区域）。
+    // DE 站 "Artikelangaben" 等使用 href=javascript:void(0) 的展开按钮不受影响。
     const btns = document.querySelectorAll('[aria-expanded="false"]');
     let n = 0;
     for (const b of btns) {
-        if (b.tagName === 'A' || b.closest('a')) continue;
+        const a = b.tagName === 'A' ? b : b.closest('a');
+        if (a) {
+            const href = a.getAttribute('href') || '';
+            if (href.startsWith('/') || href.startsWith('http')) continue;
+        }
         b.click();
         n++;
     }
@@ -409,9 +414,12 @@ class KeywordRankChecker:
                     self._wait_for_cards()
                     self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
-                    # 滚到底部确保 BSR 区域渲染（长页面 BSR 懒加载，等久一些）
+                    # 分段滚动触发懒加载（US 站长页面 BSR 在 9000px+，单次跳底不触发）
+                    for y in (2000, 4000, 6000):
+                        self._safe_evaluate(f"window.scrollTo(0, {y})")
+                        time.sleep(0.5)
                     self._safe_evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    time.sleep(2.5)
+                    time.sleep(2.0)
 
                     self._safe_evaluate(_BSR_EXPAND_JS)
                     time.sleep(1.5)
