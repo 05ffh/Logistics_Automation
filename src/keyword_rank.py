@@ -503,13 +503,14 @@ def _detect_data_start_col(ws, start_scan: int = 3) -> int:
     return 4
 
 
-def read_keywords(excel_path: Path, data_start_col: int | None = None) -> tuple[openpyxl.Workbook, list[str], int, int]:
-    """读取 Excel，返回 (wb, keywords, 最新日期所在列号, 数据起始列号)。"""
+def read_keywords(excel_path: Path, data_start_col: int | None = None) -> tuple[openpyxl.Workbook, list[str], list[int], int, int]:
+    """读取 Excel，返回 (wb, keywords, keyword_rows, 最新日期所在列号, 数据起始列号)。"""
     wb = openpyxl.load_workbook(excel_path)
     ws = wb.active
 
     # B 列关键词 (row 3+)，遇到 ASIN 标注(B0前缀)自动截断
     keywords = []
+    keyword_rows = []
     for row in range(3, ws.max_row + 1):
         v = ws.cell(row=row, column=2).value
         if v:
@@ -517,6 +518,7 @@ def read_keywords(excel_path: Path, data_start_col: int | None = None) -> tuple[
             if sv.startswith("B0"):
                 break
             keywords.append(sv)
+            keyword_rows.append(row)
 
     # 确定数据起始列
     start_col = data_start_col if data_start_col is not None else _detect_data_start_col(ws)
@@ -528,13 +530,14 @@ def read_keywords(excel_path: Path, data_start_col: int | None = None) -> tuple[
         if v is not None:
             last_date_col = col
 
-    return wb, keywords, last_date_col, start_col
+    return wb, keywords, keyword_rows, last_date_col, start_col
 
 
 def write_results(
     wb: openpyxl.Workbook,
     excel_path: Path,
     keywords: list[str],
+    keyword_rows: list[int],
     last_date_col: int,
     results: list[dict],
     bsr: str,
@@ -557,21 +560,25 @@ def write_results(
     # Row 2: BSR
     ws.cell(row=2, column=new_col, value=bsr)
 
-    # Row 3+: 关键词结果
+    # Row 3+: 按实际行号写入, 跳过空行
     for i, kw in enumerate(keywords):
         if i < len(results):
             r = results[i]
             val = format_result(r.get("organic_rank"), r.get("ad_pages", []),
                                 r.get("ad_pages_white"),
                                 carousel=r.get("carousel", False))
-            ws.cell(row=3 + i, column=new_col, value=val)
+            ws.cell(row=keyword_rows[i], column=new_col, value=val)
 
     # 备份后保存
     backup = excel_path.with_name(f"{excel_path.stem}_备份{excel_path.suffix}")
     shutil.copy2(excel_path, backup)
 
-    wb.save(excel_path)
-    return new_col, backup
+    try:
+        wb.save(excel_path)
+    except PermissionError:
+        print(f"\n文件被占用，写入失败: {excel_path}")
+        print("请关闭 Excel 后重新运行同一条命令，进度已保存无需重跑。")
+        return None, backup
 
 
 # ── CLI ─────────────────────────────────────────────────────────────
@@ -685,7 +692,7 @@ def _run_query(args):
     asins = set(args.asin)
     print(f"Site: amazon.{args.site}  |  Tracking ASINs: {asins}")
 
-    wb, keywords, last_date_col, data_start_col = read_keywords(args.excel, args.data_start_col)
+    wb, keywords, keyword_rows, last_date_col, data_start_col = read_keywords(args.excel, args.data_start_col)
     total = len(keywords)
     print(f"Keywords: {total}")
     print(f"Data start column: {data_start_col} ({openpyxl.utils.get_column_letter(data_start_col)})")
@@ -766,13 +773,14 @@ def _run_query(args):
         progress_path.unlink()
         return
 
-    new_col, backup = write_results(wb, args.excel, keywords, last_date_col, pure_results, bsr)
-    print(f"\n\nWritten to column {openpyxl.utils.get_column_letter(new_col)}")
-    print(f"Backup: {backup}")
+    new_col, backup = write_results(wb, args.excel, keywords, keyword_rows, last_date_col, pure_results, bsr)
+    if new_col is not None:
+        print(f"\n\nWritten to column {openpyxl.utils.get_column_letter(new_col)}")
+        print(f"Backup: {backup}")
+        progress_path.unlink()
     if args.json:
         print_json_summary(_build_summary(args, keywords, pure_results, bsr,
                                           timer, column=new_col, backup=backup))
-    progress_path.unlink()  # 成功写入后清理进度文件
 
 
 if __name__ == "__main__":
