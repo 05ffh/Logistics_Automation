@@ -5,13 +5,19 @@
   货件发出后生成发货信息表，需将发货数量从统计表"在采"扣除，
   并根据发货店铺（稳再/柘流）累加到对应的"在途"列。
 
+去重:
+  发货表可反复提交，脚本通过日期列识别新增数据，已处理日期的行自动跳过。
+  追踪记录保存在统计表同目录的 .cross_track.json 中，不影响 Excel。
+
 用法:
   python -m src.cross_table <统计表路径> <发货表路径...>
 """
 
 from __future__ import annotations
 
+import json
 import shutil
+from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
@@ -25,6 +31,7 @@ SHIPPING_HEADER_ROW = 2        # 发货信息表表头行
 STATS_HEADER_ROW = 1           # 统计表标签行
 STATS_DATA_START = 2           # 统计表数据起始行
 ASIN_PATTERN_PREFIX = "B0"     # ASIN 值前缀
+DATE_HEADERS = {"预计发货时间", "发货日期", "日期", "开船时间", "date", "ship_date"}
 
 
 # ── 表头 / 列位匹配 ──
@@ -51,21 +58,82 @@ def _find_asin_col(ws, data_start: int, sample: int = 5) -> int | None:
     return None
 
 
+# ── 日期解析 ──
+
+def _parse_date(val) -> date | None:
+    """将 Excel 单元格值解析为 date，失败返回 None。"""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    s = str(val).strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    import re
+    m = re.match(r"(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})[日]?", s)
+    if m:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = re.match(r"(\d{1,2})[月/-](\d{1,2})[日]?", s)
+    if m:
+        return date(date.today().year, int(m.group(1)), int(m.group(2)))
+    return None
+
+
+# ── 日期追踪文件 ──
+
+def _load_tracker(tracker_path: Path) -> dict[str, date]:
+    if tracker_path.exists():
+        try:
+            data = json.loads(tracker_path.read_text(encoding="utf-8"))
+            return {k: date.fromisoformat(v) for k, v in data.items()}
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {}
+
+
+def _save_tracker(tracker_path: Path, tracker: dict[str, date]):
+    tracker_path.write_text(
+        json.dumps({k: v.isoformat() for k, v in tracker.items()},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8")
+
+
 # ── 读取发货信息表 ──
 
-def _read_shipping(path: Path) -> list[dict]:
-    """从发货信息表提取 [{asin, store, qty, src_row, src_sheet}]。
+def _read_shipping(path: Path, cutoff: date | None = None) -> tuple[list[dict], date | None]:
+    """从发货信息表提取 [{asin, store, qty, src_row, src_sheet, date}]。
 
-    按表头匹配 asin / 发货店铺 / 发货数量 列，数据行跳过无 ASIN 的行。
+    cutoff: 只处理日期 > cutoff 的行（None 表示全部处理）。
+    自动检测日期列（预计发货时间/发货日期/日期/开船时间）。
+
+    Returns:
+        (shipments, max_date_in_file) — 无日期列时 max_date 为 None。
     """
     wb = openpyxl.load_workbook(path, data_only=True)
     result: list[dict] = []
+    max_date: date | None = None
+    skipped = 0
+    any_date_col = False
 
     for sn in wb.sheetnames:
         ws = wb[sn]
         asin_col = _find_header_col(ws, "asin", SHIPPING_HEADER_ROW)
         store_col = _find_header_col(ws, "发货店铺", SHIPPING_HEADER_ROW)
         qty_col = _find_header_col(ws, "发货数量", SHIPPING_HEADER_ROW)
+
+        # 检测日期列
+        date_col: int | None = None
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(row=SHIPPING_HEADER_ROW, column=c).value
+            if v and str(v).strip() in DATE_HEADERS:
+                date_col = c
+                any_date_col = True
+                break
 
         if asin_col is None:
             print(f"  [警告] 发货表 Sheet '{sn}' 未找到 'asin' 表头, 跳过")
@@ -85,16 +153,36 @@ def _read_shipping(path: Path) -> list[dict]:
             qty = _safe_int(ws.cell(row=r, column=qty_col).value)
             if not store or qty == 0:
                 continue
+
+            row_date = None
+            if date_col is not None:
+                row_date = _parse_date(ws.cell(row=r, column=date_col).value)
+
+            # 日期过滤：已处理日期的行跳过
+            if cutoff is not None and row_date is not None and row_date <= cutoff:
+                skipped += 1
+                continue
+
+            if row_date is not None and (max_date is None or row_date > max_date):
+                max_date = row_date
+
             result.append({
                 "asin": asin,
                 "store": store,
                 "qty": qty,
                 "src_row": r,
                 "src_sheet": sn,
+                "date": row_date,
             })
 
     wb.close()
-    return result
+
+    if skipped > 0:
+        print(f"  已跳过 {skipped} 行 (日期 <= {cutoff}, 已处理)")
+    if not any_date_col:
+        print(f"  [提示] 未检测到日期列，本次全量处理（后续提交将无去重保护）")
+
+    return result, max_date
 
 
 # ── 应用更新到统计表 ──
@@ -220,23 +308,32 @@ def cross_update(stats_path: str | Path, *shipping_paths: str | Path) -> dict:
     """跨表填写主函数。
 
     Returns:
-        {updated, missing, negative, backup}
+        {updated, missing, negative, skipped, backup}
     """
     stats_path = Path(stats_path)
+    tracker_path = stats_path.with_name(f"{stats_path.stem}.cross_track.json")
+    tracker = _load_tracker(tracker_path)
 
-    # 1. 读所有发货信息表
+    # 1. 读所有发货信息表（按日期去重）
     shipments: list[dict] = []
+    total_skipped = 0
     for sp in shipping_paths:
         sp = Path(sp)
         print(f"读取发货信息表: {sp}")
-        batch = _read_shipping(sp)
-        print(f"  找到 {len(batch)} 条发货记录")
+        cutoff = tracker.get(sp.name)
+        if cutoff:
+            print(f"  上次处理日期: {cutoff}, 仅处理此日期之后的记录")
+        batch, max_date = _read_shipping(sp, cutoff)
+        print(f"  找到 {len(batch)} 条需处理的记录")
+        if max_date:
+            tracker[sp.name] = max_date
         shipments.extend(batch)
 
     if not shipments:
-        print("未找到有效数据行 (需要 asin 以 B0 开头 + 发货店铺 + 发货数量)")
-        return {"updated": 0, "missing": 0, "negative": 0}
-    print(f"共 {len(shipments)} 条发货记录")
+        print("未找到需处理的新数据 (所有记录均已处理或缺少有效数据)")
+        return {"updated": 0, "missing": 0, "negative": 0, "skipped": 0}
+
+    print(f"共 {len(shipments)} 条发货记录待处理")
 
     # 2. 备份统计表
     backup_path = stats_path.with_name(f"{stats_path.stem}_备份{stats_path.suffix}")
@@ -247,6 +344,11 @@ def cross_update(stats_path: str | Path, *shipping_paths: str | Path) -> dict:
     print(f"更新统计表: {stats_path}")
     result = _apply_updates(stats_path, shipments)
     result["backup"] = str(backup_path)
+
+    # 4. 保存日期追踪（只在更新成功时写入）
+    if result["updated"] > 0:
+        _save_tracker(tracker_path, tracker)
+        print(f"  已更新日期追踪: {tracker_path.name}")
 
     print(f"\n完成: 更新 {result['updated']} 行"
           f", 未找到 {result['missing']} 条"
