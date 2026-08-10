@@ -301,7 +301,12 @@ class KeywordRankChecker:
                     break  # "下一页"按钮不可达，终止翻页
 
             # 等卡片渲染完成后再加少量缓冲
-            self._wait_for_cards()
+            if not self._wait_for_cards():
+                # 慢机器可能 10s 不够，额外等 5s 再试一次
+                time.sleep(5)
+                if not self._wait_for_cards():
+                    print(f"(slow page, skipping)", end=" ", flush=True)
+                    continue
             self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
 
             # 模拟人工浏览行为
