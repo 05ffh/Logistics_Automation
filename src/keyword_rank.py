@@ -386,19 +386,32 @@ class KeywordRankChecker:
         self.cdp.click_element("#nav-search-submit-button")
 
     def _click_next_page(self) -> bool:
-        """鼠标点击"下一页"按钮。成功返回 True。"""
-        import random
-        # 先滚到底部（翻页按钮在页面底部）
+        """鼠标点击"下一页"按钮，URL 校验确保翻页成功才返回 True。"""
+        import random, re
+
+        old_url = self._safe_evaluate("window.location.href")
+        old_page = 1
+        if old_url and old_url.get("result", {}).get("result", {}).get("value"):
+            m = re.search(r'[?&]page=(\d+)', old_url["result"]["result"]["value"])
+            if m:
+                old_page = int(m.group(1))
+
         self._safe_evaluate("window.scrollTo(0, document.body.scrollHeight)")
         time.sleep(0.4 + random.random() * 0.4)
 
-        # 尝试点击下一页链接（Amazon 的 .s-pagination-next 或 a[href*='page='] 最后一个）
-        result = self.cdp.click_element("a.s-pagination-next")
-        if result.get("ok"):
-            return True
-        # 回退：尝试找最后一个包含 page= 的链接
-        result = self.cdp.click_element(".s-pagination-container a:last-of-type")
-        return result.get("ok", False)
+        selectors = ["a.s-pagination-next", ".s-pagination-container a:last-of-type"]
+        for sel in selectors:
+            result = self.cdp.click_element(sel)
+            if not result.get("ok"):
+                continue
+            time.sleep(1.0)
+            new_url = self._safe_evaluate("window.location.href")
+            if new_url and new_url.get("result", {}).get("result", {}).get("value"):
+                m = re.search(r'[?&]page=(\d+)', new_url["result"]["result"]["value"])
+                new_page = int(m.group(1)) if m else 1
+                if new_page != old_page:
+                    return True
+        return False
 
     # ── 关键词间隔 ────────────────────────────────────────────────
 
