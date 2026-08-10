@@ -579,6 +579,7 @@ def write_results(
         print(f"\n文件被占用，写入失败: {excel_path}")
         print("请关闭 Excel 后重新运行同一条命令，进度已保存无需重跑。")
         return None, backup
+    return new_col, backup
 
 
 # ── CLI ─────────────────────────────────────────────────────────────
