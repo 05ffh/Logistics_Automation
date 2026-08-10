@@ -412,7 +412,8 @@ class KeywordRankChecker:
                     self._ensure_tab()
                     self._navigate(f"https://www.{SITE_DOMAIN[self.site]}/dp/{asin}")
                     self._wait_for_cards()
-                    self._human_delay(PAGE_LOAD_MIN, PAGE_LOAD_MAX)
+                    # US 站产品页面加载较慢(9000px+), 需要更长初始等待
+                    self._human_delay(3.0, 4.0)
 
                     # 分段滚动触发懒加载（US 站长页面 BSR 在 9000px+，单次跳底不触发）
                     for y in (2000, 4000, 6000):
