@@ -84,41 +84,45 @@ def _parse_date(val) -> date | None:
     return None
 
 
-# ── 日期追踪文件 ──
+# ── 行指纹追踪 ──
 
-def _load_tracker(tracker_path: Path) -> dict[str, date]:
+def _row_key(asin: str, store: str, qty: int, row_date, sheet: str, row: int) -> str:
+    """生成行指纹：同一行数据不会重复处理，改变任一字段视为新行。"""
+    ds = row_date.isoformat() if row_date else ""
+    return f"{asin}|{store}|{qty}|{ds}|{sheet}|{row}"
+
+
+def _load_tracker(tracker_path: Path) -> dict[str, set[str]]:
+    """加载行指纹追踪: {shipping_filename: set of row_keys}。"""
     if tracker_path.exists():
         try:
             data = json.loads(tracker_path.read_text(encoding="utf-8"))
-            return {k: date.fromisoformat(v) for k, v in data.items()}
+            return {k: set(v) for k, v in data.items()}
         except (json.JSONDecodeError, ValueError):
             pass
     return {}
 
 
-def _save_tracker(tracker_path: Path, tracker: dict[str, date]):
+def _save_tracker(tracker_path: Path, tracker: dict[str, set[str]]):
     tracker_path.write_text(
-        json.dumps({k: v.isoformat() for k, v in tracker.items()},
+        json.dumps({k: sorted(v) for k, v in tracker.items()},
                    ensure_ascii=False, indent=2),
         encoding="utf-8")
 
 
 # ── 读取发货信息表 ──
 
-def _read_shipping(path: Path, cutoff: date | None = None) -> tuple[list[dict], date | None]:
+def _read_shipping(path: Path, processed: set[str] | None = None) -> list[dict]:
     """从发货信息表提取 [{asin, store, qty, src_row, src_sheet, date}]。
 
-    cutoff: 只处理日期 > cutoff 的行（None 表示全部处理）。
+    processed: 已处理的行指纹集合，匹配的行自动跳过。
     自动检测日期列（预计发货时间/发货日期/日期/开船时间）。
-
-    Returns:
-        (shipments, max_date_in_file) — 无日期列时 max_date 为 None。
     """
     wb = openpyxl.load_workbook(path, data_only=True)
     result: list[dict] = []
-    max_date: date | None = None
     skipped = 0
     any_date_col = False
+    processed = processed or set()
 
     for sn in wb.sheetnames:
         ws = wb[sn]
@@ -158,18 +162,16 @@ def _read_shipping(path: Path, cutoff: date | None = None) -> tuple[list[dict], 
             if date_col is not None:
                 row_date = _parse_date(ws.cell(row=r, column=date_col).value)
 
-            # 日期过滤：已处理日期的行跳过
-            if cutoff is not None and row_date is not None and row_date <= cutoff:
+            key = _row_key(asin, store, qty, row_date, sn, r)
+            if key in processed:
                 skipped += 1
                 continue
-
-            if row_date is not None and (max_date is None or row_date > max_date):
-                max_date = row_date
 
             result.append({
                 "asin": asin,
                 "store": store,
                 "qty": qty,
+                "key": key,
                 "src_row": r,
                 "src_sheet": sn,
                 "date": row_date,
@@ -178,11 +180,11 @@ def _read_shipping(path: Path, cutoff: date | None = None) -> tuple[list[dict], 
     wb.close()
 
     if skipped > 0:
-        print(f"  已跳过 {skipped} 行 (日期 <= {cutoff}, 已处理)")
+        print(f"  已跳过 {skipped} 行 (行指纹已追踪)")
     if not any_date_col:
         print(f"  [提示] 未检测到日期列，本次全量处理（后续提交将无去重保护）")
 
-    return result, max_date
+    return result
 
 
 # ── 应用更新到统计表 ──
@@ -314,24 +316,22 @@ def cross_update(stats_path: str | Path, *shipping_paths: str | Path) -> dict:
     tracker_path = stats_path.with_name(f"{stats_path.stem}.cross_track.json")
     tracker = _load_tracker(tracker_path)
 
-    # 1. 读所有发货信息表（按日期去重）
+    # 1. 读所有发货信息表（按行指纹去重）
     shipments: list[dict] = []
-    total_skipped = 0
     for sp in shipping_paths:
         sp = Path(sp)
         print(f"读取发货信息表: {sp}")
-        cutoff = tracker.get(sp.name)
-        if cutoff:
-            print(f"  上次处理日期: {cutoff}, 仅处理此日期之后的记录")
-        batch, max_date = _read_shipping(sp, cutoff)
+        processed = tracker.get(sp.name, set())
+        if processed:
+            print(f"  已追踪 {len(processed)} 行指纹，重复行自动跳过")
+        batch = _read_shipping(sp, processed)
         print(f"  找到 {len(batch)} 条需处理的记录")
-        if max_date:
-            tracker[sp.name] = max_date
+        tracker.setdefault(sp.name, set()).update(s.get("key", "") for s in batch)
         shipments.extend(batch)
 
     if not shipments:
-        print("未找到需处理的新数据 (所有记录均已处理或缺少有效数据)")
-        return {"updated": 0, "missing": 0, "negative": 0, "skipped": 0}
+        print("未找到需处理的新数据 (所有记录均已处理)")
+        return {"updated": 0, "missing": 0, "negative": 0}
 
     print(f"共 {len(shipments)} 条发货记录待处理")
 
@@ -345,10 +345,10 @@ def cross_update(stats_path: str | Path, *shipping_paths: str | Path) -> dict:
     result = _apply_updates(stats_path, shipments)
     result["backup"] = str(backup_path)
 
-    # 4. 保存日期追踪（只在更新成功时写入）
+    # 4. 保存行指纹追踪（只在更新成功时写入）
     if result["updated"] > 0:
         _save_tracker(tracker_path, tracker)
-        print(f"  已更新日期追踪: {tracker_path.name}")
+        print(f"  已更新追踪: {tracker_path.name}")
 
     print(f"\n完成: 更新 {result['updated']} 行"
           f", 未找到 {result['missing']} 条"
