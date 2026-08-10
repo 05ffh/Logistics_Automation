@@ -117,7 +117,7 @@ class TabKeepAlive:
 
     @staticmethod
     def status(host: str = "localhost", port: int = 9222) -> dict:
-        """查询 Edge CDP 状态，返回 {running: bool, logistics_tabs: int}。"""
+        """查询 Chrome CDP 状态，返回 {running: bool, logistics_tabs: int}。"""
         try:
             raw = urlopen(f"http://{host}:{port}/json", timeout=3)
             tabs = json.loads(raw.read())

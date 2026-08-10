@@ -1,9 +1,7 @@
 """关键词排名查询 — 每天自动查 Amazon 搜索结果中的自然位排名 + 广告位页码 + BSR 大类排名。
 
-安全策略:
-- 只用 evaluate() 读 DOM，绝不 click()
-- 翻页只通过 window.location.href
-- 广告链接 (/sspa/click) 只识别不触碰
+鼠标驱动搜索（搜索框点击+按钮点击+翻页点击），模拟真人操作节奏。
+广告识别两遍：Sponsored 文字 + 品牌容器类名。
 
 用法:
     # 刮水器 (Amazon DE, 7 ASINs)

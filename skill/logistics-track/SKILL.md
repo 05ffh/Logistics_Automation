@@ -1,6 +1,6 @@
 ---
 name: logistics-track
-description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询（原生 CDP 鼠标点击按钮 + 限流预警）。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配、格式迁移、跨表数据填写、Amazon关键词排名查询(刮水器/猫砂垫/反光衣)
+description: 物流轨迹自动查询 - 从发货明细表 Excel 中按单号前缀识别各家物流公司(宁致/云驼/小满)，通过 CDP 操控浏览器查询运单轨迹，按公司分别写回"物流轨迹N"列。宁致/小满使用 fetch API 直调内部 JSON 接口，云驼使用 DOM 逐单查询（原生 CDP 鼠标点击按钮 + 限流预警）。支持缺失追踪、顽固补查、数据录入、ASIN图片匹配、格式迁移、跨表数据填写、Amazon关键词排名查询(刮水器/猫砂垫/反光衣/双面U型枕/加拿大驼峰U型枕)
 type: skill
 platform: windows,linux
 ---
@@ -28,7 +28,7 @@ platform: windows,linux
 
 之后每次使用：双击 `.bat` → 告诉 Claude 要查哪个 Excel。
 
-Edge 版本保留（`物流网站一键启动.bat`），Chrome 版本（`物流网站一键启动-Chrome.bat`）推荐使用。
+使用 Chrome（`物流网站一键启动-Chrome.bat`）。
 
 ## 每次使用流程
 
@@ -36,7 +36,7 @@ Edge 版本保留（`物流网站一键启动.bat`），Chrome 版本（`物流�
 你说: "帮我查桌面上测试（云驼、宁致）的物流轨迹"
     ↓
 Skill 自动:
-  1. 检查 Chrome/Edge 9222 是否就绪
+  1. 检查 Chrome 9222 是否就绪
   2. 自检各站点是否可查询 (--healthcheck)
   3. 读 Excel → 按单号前缀归属公司（不依赖发货公司列）→ 解析合并单元格
   4. 报告: "找到 宁致12行/11个单号, 云驼71行/81个单号, 确认开始？"
@@ -55,7 +55,7 @@ Skill 自动:
 | 小满 | XM | xmsdwl.nextsls.com | fetch API（无需登录） |
 
 **单号归属**：按前缀匹配（`999`=云驼、`NZ`=宁致、`XM`=小满），不依赖发货公司列（业务填写不规范，前缀才是权威标识）。
-**轨迹列**：每家公司独占"物流轨迹N"列，N = 该公司单号在 物流单号 列首次出现的次序。缺列自动新增。
+**轨迹列**：每家公司独占"物流轨迹N"列，N = 该公司单号在物流单号列首次出现的次序。缺列自动新增。
 **列位匹配**：第 2 行表头文字自动匹配（"物流单号""物流轨迹N"），不再硬编码列索引，兼容不同格式 Excel。
 
 ## 脚本
@@ -72,7 +72,7 @@ python -m src.data_entry <excel_path> [--json]
 
 # ASIN 图片匹配
 python -m src.image_inserter build <ASIN映射Excel>
-python -m src.image_inserter insert <目标Excel> [--json]
+python -m src.image_inserter insert <目标Excel>
 
 # 旧格式迁移
 python -m src.migrate <旧格式Excel> -o <输出路径> [--json]
@@ -267,7 +267,7 @@ python -m src.cross_table <统计表> <发货表1> [发货表2] ...
 | 情况 | 处理 |
 |------|------|
 | Chrome 9222 不通 | 提示 "请先双击 物流网站一键启动.bat 启动 Chrome" |
-| nzhexp 未登录 | 提示 "请在 Edge 中打开 nzhexp 页面并登录" |
+| nzhexp 未登录 | 提示 "请在 Chrome 中打开 nzhexp 页面并登录" |
 | Excel 文件被占用 | 提示 "请关闭 Excel 后重新运行同一条命令"，进度已保存无需重跑 |
 | 单号查询无结果 | 保留旧轨迹不覆盖，记入 misses JSON 供后续补查 |
 | 某公司成功率异常低 | ⚠️ 告警 + 跳过写入该公司（保护存量数据不被覆盖） |
@@ -297,7 +297,7 @@ python -m src.keyword_rank <产品2>.xlsx --site fr --asin ...
 
 | 产品 | 站点 | ASIN | 广告 ASIN | BSR ASIN | Excel 路径 |
 |------|------|------|-----------|----------|-----------|
-| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | B0CLXXD2X4 B0H1R1DGKH | 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4 | 刮水器关键词.xlsx |
+| 刮水器 | de | B0CLXXD2X4 B0C6TCLHHT ... (7个) | 全部 --asin（默认追踪全部） | 窗户类:B0H4LXJ5QG 浴室类:B0CLXXD2X4 | 刮水器关键词.xlsx |
 | 猫砂垫 | fr | B0CH4N8V6P | 同 ASIN | B0CH4N8V6P | 猫砂垫关键词7.29.xlsx |
 | 反光衣 | fr | B0GCDF56DJ B0GCF4T6NM B0GCFNSKDS | 同 ASIN | B0GCDF56DJ | 反光衣关键词.xlsx |
 | 双面U型枕 | us | B0GXP3PP8C B0GXPPP7YM B0GXP7CRSZ B0GXP7X4FV B0GXP89L6P | 同 ASIN | B0GXP3PP8C | 双面U型枕.xlsx |

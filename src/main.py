@@ -133,7 +133,7 @@ def _main_impl():
         try:
             cdp.list_tabs()
         except Exception:
-            print("ERROR: Cannot reach Edge CDP. Is Edge running with --remote-debugging-port=9222?")
+            print("ERROR: Cannot reach Chrome CDP. Is Chrome running with --remote-debugging-port=9222?")
             sys.exit(1)
         timer = RunTimer()
         ok = run_healthcheck(cdp, adapters)
@@ -175,8 +175,8 @@ def _main_impl():
     try:
         cdp.list_tabs()
     except Exception:
-        print("ERROR: Cannot reach Edge CDP. Is Edge running with --remote-debugging-port=9222?")
-        print("Double-click 物流网站一键启动.bat to start Edge first.")
+        print("ERROR: Cannot reach Chrome CDP. Is Chrome running with --remote-debugging-port=9222?")
+        print("Double-click 物流网站一键启动-Chrome.bat to start Chrome first.")
         sys.exit(1)
 
     # 2. 读取 Excel

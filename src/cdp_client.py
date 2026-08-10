@@ -1,4 +1,4 @@
-"""CDP 客户端 - 通过 Chrome DevTools Protocol 操控 Edge 浏览器。"""
+"""CDP 客户端 - 通过 Chrome DevTools Protocol 操控 Chrome 浏览器。"""
 
 from __future__ import annotations
 
