@@ -119,9 +119,15 @@ _EXTRACT_JS = """
 
 _BSR_EXPAND_JS = """
 (() => {
+    // 只展开按钮/span 类元素，跳过链接（US 站 "See Top 100" 等 href 元素被点击会破坏 BSR 区域）
     const btns = document.querySelectorAll('[aria-expanded="false"]');
-    for (const b of btns) { b.click(); }
-    return btns.length;
+    let n = 0;
+    for (const b of btns) {
+        if (b.tagName === 'A' || b.closest('a')) continue;
+        b.click();
+        n++;
+    }
+    return n;
 })()
 """
 
